@@ -11,6 +11,7 @@
  */
 
 import { cells, area, size, rotateCW, normalize, orientations, debugDraw } from '../data/shapes.js';
+import { resolvedShape, clothSize, clothFits, centeredAnchor, STAGE } from '../data/cloths.js';
 
 export { cells, area, size, rotateCW, normalize, orientations, debugDraw };
 
@@ -23,6 +24,12 @@ export class Board {
     /** @type {Map<string, {item:object, x:number, y:number, shape:string[]}>} */
     this.items = new Map();
     this._order = null;   // 触发顺序缓存，任何变更后失效
+    /**
+     * 铺在舞台上的布：{ cloth: 布定义, x, y, flipped, rotation }
+     * 为 null 时不限制可放置区域（部分单元测试与对手构筑用这种「裸网格」）；
+     * 正式对局由 Run 铺一块布，物品只能落在布上。
+     */
+    this.cloth = null;
   }
 
   idx(x, y) { return y * this.cols + x; }
@@ -47,10 +54,112 @@ export class Board {
   canPlace(shape, x, y, ignoreUid = null) {
     for (const c of this.footprint(shape, x, y)) {
       if (!this.inBounds(c.x, c.y)) return false;
+      if (!this.onCloth(c.x, c.y)) return false;      // 只有布覆盖到的格子能放
       const occ = this.at(c.x, c.y);
       if (occ && occ !== ignoreUid) return false;
     }
     return true;
+  }
+
+  // ---------- 布 ----------
+
+  /** 当前布的实际形状（已应用翻转与旋转） */
+  clothShape() {
+    if (!this.cloth) return null;
+    return resolvedShape(this.cloth.cloth.shape, this.cloth);
+  }
+
+  /** 布覆盖的格子集合；返回 null 表示不限制 */
+  clothCells() {
+    const shape = this.clothShape();
+    if (!shape) return null;
+    const set = new Set();
+    for (const c of cells(shape)) set.add(`${this.cloth.x + c.x},${this.cloth.y + c.y}`);
+    return set;
+  }
+
+  /** 这一格是否在布上（无布时一律算在） */
+  onCloth(x, y) {
+    const set = this.clothCells();
+    if (!set) return true;
+    return set.has(`${x},${y}`);
+  }
+
+  /** 铺一块布；不传锚点就居中 */
+  setCloth(clothDef, anchor = null) {
+    const a = anchor || centeredAnchor(clothDef.shape);
+    this.cloth = { cloth: clothDef, x: a.x, y: a.y, flipped: false, rotation: 0 };
+    this._order = null;
+    return this.returnItemsToCloth();
+  }
+
+  /** 布整体平移，布上的道具跟着一起走（相对位置不变） */
+  moveCloth(dx, dy) {
+    if (!this.cloth) return { ok: false, reason: '还没有铺布' };
+    const shape = this.clothShape();
+    const nx = this.cloth.x + dx, ny = this.cloth.y + dy;
+    if (!clothFits(this.cloth.cloth, shape, nx, ny)) return { ok: false, reason: '布会超出背包范围' };
+
+    const moved = this.list().map((e) => ({
+      item: e.item, x: e.x + dx, y: e.y + dy, shape: [...e.shape],
+    }));
+    for (const e of moved) {
+      for (const c of this.footprint(e.shape, e.x, e.y)) {
+        if (!this.inBounds(c.x, c.y)) return { ok: false, reason: '道具会被推出背包' };
+      }
+    }
+    this.items.clear();
+    this.cells.fill(null);
+    this.cloth.x = nx;
+    this.cloth.y = ny;
+    this._order = null;
+    for (const e of moved) this.place(e.item, e.x, e.y, e.shape);
+    return { ok: true };
+  }
+
+  /** 水平翻转布 */
+  flipCloth() {
+    return this.transformCloth({ flipped: !this.cloth?.flipped });
+  }
+
+  /** 顺时针旋转布 */
+  rotateCloth() {
+    return this.transformCloth({ rotation: ((this.cloth?.rotation || 0) + 1) % 4 });
+  }
+
+  transformCloth(patch) {
+    if (!this.cloth) return { ok: false, reason: '还没有铺布' };
+    const trial = { ...this.cloth, ...patch };
+    const shape = resolvedShape(this.cloth.cloth.shape, trial);
+    if (!clothFits(this.cloth.cloth, shape, trial.x, trial.y)) {
+      const a = centeredAnchor(shape);
+      if (!clothFits(this.cloth.cloth, shape, a.x, a.y)) {
+        return { ok: false, reason: '这个方向放不下这块布' };
+      }
+      trial.x = a.x;
+      trial.y = a.y;
+    }
+    this.cloth = trial;
+    this._order = null;
+    return { ok: true, dropped: this.returnItemsToCloth() };
+  }
+
+  /**
+   * 把落到布外的道具搬回布上。
+   * 搬不回去的返回给上层处理（Run 会把它们折成金币）。
+   */
+  returnItemsToCloth() {
+    if (!this.cloth) return [];
+    const dropped = [];
+    for (const e of this.list()) {
+      const inside = this.footprint(e.shape, e.x, e.y).every((c) => this.onCloth(c.x, c.y));
+      if (inside) continue;
+      this.remove(e.item.uid);
+      const spot = this.findFreeSpot(e.shape);
+      if (spot) this.place(e.item, spot.x, spot.y, e.shape);
+      else dropped.push(e.item);
+    }
+    return dropped;
   }
 
   /** 列出所有能放下该形状的锚点，供 UI 提示「可以放哪」 */

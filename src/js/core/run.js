@@ -15,6 +15,7 @@ import { makeOpponent } from './opponents.js';
 import { ECON, MATCH } from '../data/constants.js';
 import { RECIPE_MAP, ITEM_BY_ID } from '../data/items.js';
 import { CLASS_BY_ID, branchOf } from '../data/classes.js';
+import { STAGE, STARTER_CLOTH, CLOTH_BY_ID, clothArea } from '../data/cloths.js';
 
 export const PHASE = {
   CHOOSE_CLASS: 'choose_class',
@@ -49,7 +50,13 @@ export class Run {
       expands: 0,
     };
 
-    this.board = new Board(cls.bag.cols, cls.bag.rows);
+    // 舞台固定 9×7，真正能用的是铺在上面的那块布
+    this.board = new Board(STAGE.cols, STAGE.rows);
+    this.board.setCloth(STARTER_CLOTH);
+    this.header.clothId = STARTER_CLOTH.id;
+    this.header.clothName = STARTER_CLOTH.name;
+    // 储物箱：不限容量，放着不占背包，也不参与战斗
+    this.storage = [];
     this.shop = new Shop(seed);
     this.phase = PHASE.PREPARE;
     this.log = [];
@@ -101,6 +108,28 @@ export class Run {
     return { ok: true, item: inst };
   }
 
+  /** 从商店拖到指定格：直接买下并放在玩家指的位置 */
+  buyAt(index, x, y) {
+    const slot = this.shop.slots[index];
+    if (!slot) return { ok: false, reason: '货架没有这一格' };
+    if (slot.sold) return { ok: false, reason: '这件已经买走了' };
+    if (this.header.gold < slot.item.price) return { ok: false, reason: '金币不够' };
+
+    const inst = { ...slot.item, uid: nextUid() };
+    if (!this.board.canPlace(inst.shape, x, y)) {
+      return { ok: false, reason: '这个位置放不下，拖到布上' };
+    }
+
+    const res = this.shop.buy(index, this.header.gold);
+    if (!res.ok) return { ok: false, reason: res.reason };
+
+    this.header.gold -= res.cost;
+    this.board.place(inst, x, y, inst.shape);
+    this.note(`买入 ${inst.name}（-${res.cost} 金）`);
+    this.resolveFusions();
+    return { ok: true, item: inst };
+  }
+
   sell(uid) {
     const e = this.board.get(uid);
     if (!e) return { ok: false };
@@ -121,29 +150,93 @@ export class Run {
     return { ok: true };
   }
 
-  // ---------- 背包扩容 ----------
+  // ---------- 背包布 ----------
 
-  /** 扩容上限：列最多 9，行最多 11 */
-  canExpand() {
-    return this.board.cols < 9 || this.board.rows < 11;
+  /** 当前用的布 */
+  currentCloth() {
+    return CLOTH_BY_ID[this.header.clothId] || STARTER_CLOTH;
   }
 
-  /** 扩容花费：越往后越贵 */
-  expandCost() {
-    return 14 + (this.header.expands || 0) * 6;
+  /**
+   * 换一块布（商店里的「扩容」就是这个）。
+   * 布变大或换形状后，原来落在布外的道具会尽量搬回布上，
+   * 实在放不下的折成金币退给玩家，不会凭空消失。
+   */
+  buyCloth(clothId) {
+    const def = CLOTH_BY_ID[clothId];
+    if (!def) return { ok: false, reason: '没有这块布' };
+    if (this.header.clothId === clothId) return { ok: false, reason: '已经在用这块布了' };
+    if (this.header.gold < def.price) return { ok: false, reason: `需要 ${def.price} 金` };
+
+    this.header.gold -= def.price;
+    const dropped = this.board.setCloth(def) || [];
+    this.header.clothId = clothId;
+    this.header.clothName = def.name;
+
+    let refund = 0;
+    for (const it of dropped) refund += Math.max(1, Math.floor((it.price || 0) / 2));
+    if (refund) this.header.gold += refund;
+
+    this.note(`换上 ${def.name}（-${def.price} 金）`
+      + (dropped.length ? `，${dropped.length} 件放不下已折 ${refund} 金` : ''));
+    return { ok: true, refund, dropped: dropped.length, area: clothArea(def.shape) };
   }
 
-  /** 买一次扩容：先加列，列到顶再加行 */
-  expandBag() {
-    if (!this.canExpand()) return { ok: false, reason: '背包已经扩到最大' };
-    const cost = this.expandCost();
-    if (this.header.gold < cost) return { ok: false, reason: `需要 ${cost} 金` };
-    this.header.gold -= cost;
-    this.header.expands = (this.header.expands || 0) + 1;
-    if (this.board.cols < 9) this.board.expand(this.board.cols + 1, this.board.rows);
-    else this.board.expand(this.board.cols, this.board.rows + 1);
-    this.note(`背包扩容到 ${this.board.cols}×${this.board.rows}（-${cost} 金）`);
-    return { ok: true, cols: this.board.cols, rows: this.board.rows, cost };
+  // ---------- 储物箱 ----------
+
+  /** 收进储物箱：不限容量 */
+  storeItem(uid) {
+    const entry = this.board.get(uid);
+    if (!entry) return { ok: false, reason: '没找到这件道具' };
+    this.board.remove(uid);
+    this.storage.push(entry.item);
+    this.note(`${entry.item.name} 收进储物箱（现有 ${this.storage.length} 件）`);
+    return { ok: true, count: this.storage.length };
+  }
+
+  /** 从储物箱取回背包：自动找空位 */
+  takeItem(uid) {
+    const i = this.storage.findIndex((it) => it.uid === uid);
+    if (i < 0) return { ok: false, reason: '箱子里没有这件' };
+    const item = this.storage[i];
+    const spot = this.board.findFreeSpot(item.shape);
+    if (!spot) return { ok: false, reason: '背包放不下了，先挪挪布或卖掉点东西' };
+    this.storage.splice(i, 1);
+    this.board.place(item, spot.x, spot.y, item.shape);
+    this.note(`${item.name} 从储物箱取回背包`);
+    return { ok: true, x: spot.x, y: spot.y };
+  }
+
+  /** 布整体移动：布上的道具跟着走 */
+  moveCloth(dx, dy) {
+    const res = this.board.moveCloth(dx, dy);
+    if (res.ok) this.note(`挪动背包布（${dx >= 0 ? '+' : ''}${dx}, ${dy >= 0 ? '+' : ''}${dy}）`);
+    return res;
+  }
+
+  flipCloth() {
+    const res = this.board.flipCloth();
+    if (!res.ok) return res;
+    this.refundDropped(res.dropped);
+    this.note('水平翻转背包布');
+    return res;
+  }
+
+  rotateCloth() {
+    const res = this.board.rotateCloth();
+    if (!res.ok) return res;
+    this.refundDropped(res.dropped);
+    this.note('旋转背包布');
+    return res;
+  }
+
+  refundDropped(dropped) {
+    if (!dropped || !dropped.length) return 0;
+    let refund = 0;
+    for (const it of dropped) refund += Math.max(1, Math.floor((it.price || 0) / 2));
+    this.header.gold += refund;
+    this.note(`${dropped.length} 件道具放不下，折成 ${refund} 金`);
+    return refund;
   }
 
   /** 商店品质由回合自动决定，玩家不再需要手动升级 */

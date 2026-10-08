@@ -10,22 +10,18 @@
 import { cells, size } from '../data/shapes.js';
 import { CATEGORIES, RARITY, chargeSeconds } from '../data/items.js';
 import { BOARD, SHOP_QUALITY } from '../data/constants.js';
+import { CELL as CLOTH_CELL, shopCloths, clothArea, clothSize } from '../data/cloths.js';
 import { itemEffectiveStats, dpsOf, armoredDps } from '../core/analyze.js';
 import { upgradeOf, chainOf } from '../data/recipes.js';
 
-/* 格子尺寸按可用空间自适应：背包要尽量大，但不能溢出屏幕 */
+/* 格子尺寸固定 64px：不再随窗口缩放，位置就不会「自己动」 */
 const GAP = BOARD.gap;
 const PAD = BOARD.pad;
-let CELL = BOARD.cell;
+let CELL = CLOTH_CELL;
 let STEP = CELL + GAP;
 
-export function setCellSize(px) {
-  const next = Math.max(26, Math.min(104, Math.round(px)));
-  if (next === CELL) return false;
-  CELL = next;
-  STEP = CELL + GAP;
-  return true;
-}
+/** 保留接口：现在尺寸固定，调用它不会再改变任何东西 */
+export function setCellSize() { return false; }
 export function getCellSize() { return CELL; }
 export function getLayout() { return { CELL, GAP, PAD, STEP }; }
 
@@ -62,6 +58,21 @@ export function renderBoard(root, board, opts = {}) {
     }
   }
   root._cellEls = cellEls;
+
+  // 布：标出哪些格子在布上，以及布的外边界
+  const clothSet = board.clothCells();
+  if (clothSet) {
+    for (const key of clothSet) {
+      const cell = cellEls.get(key);
+      if (!cell) continue;
+      cell.classList.add('on-cloth');
+      const [cx, cy] = key.split(',').map(Number);
+      if (!clothSet.has(`${cx},${cy - 1}`)) cell.classList.add('edge-t');
+      if (!clothSet.has(`${cx},${cy + 1}`)) cell.classList.add('edge-b');
+      if (!clothSet.has(`${cx - 1},${cy}`)) cell.classList.add('edge-l');
+      if (!clothSet.has(`${cx + 1},${cy}`)) cell.classList.add('edge-r');
+    }
+  }
 
   const chipEls = new Map();
 
@@ -163,7 +174,7 @@ export function setSellActive(on) {
 
 // ============ 商店 ============
 
-export function renderShop(root, shop, gold, { onBuy, onLock }) {
+export function renderShop(root, shop, gold, { onBuy, onLock, onDragStart }) {
   root.innerHTML = '';
   shop.slots.forEach((slot, i) => {
     const el = document.createElement('div');
@@ -193,6 +204,12 @@ export function renderShop(root, shop, gold, { onBuy, onLock }) {
       if (ev.shiftKey || ev.altKey) { onLock(i); return; }
       onBuy(i);
     });
+    if (onDragStart) {
+      el.addEventListener('pointerdown', (ev) => {
+        if (ev.button !== 0 || slot.sold) return;
+        onDragStart(i, ev, el);
+      });
+    }
     el.addEventListener('contextmenu', (ev) => { ev.preventDefault(); onLock(i); });
     root.appendChild(el);
   });
@@ -465,4 +482,63 @@ export function renderOverview(el, ov, board) {
     </div>`).join('');
 
   el.innerHTML = `<div class="stat-rows">${rowsHtml}</div>`;
+}
+
+
+// ============ 背包布 ============
+
+/** 布信息条：当前布的尺寸、还能往哪挪 */
+export function renderClothBar(elName, elSize, run) {
+  const def = run.currentCloth();
+  const st = run.board.cloth;
+  if (elName) elName.textContent = def.name;
+  if (elSize) {
+    const { w, h } = clothSize(run.board.clothShape() || def.shape);
+    elSize.textContent = `${w}×${h} · ${clothArea(def.shape)} 格 · 位置 ${st.x + 1},${st.y + 1}`;
+  }
+}
+
+/** 布货架：点一下就换上，等于扩容 */
+export function renderClothShop(root, run, { onBuy }) {
+  if (!root) return;
+  root.innerHTML = '';
+  const cur = run.header.clothId;
+  for (const c of shopCloths()) {
+    const owned = cur === c.id;
+    const afford = run.header.gold >= c.price;
+    const { w, h } = clothSize(c.shape);
+    let dots = '';
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        dots += `<i class="${c.shape[y]?.[x] === 'X' ? 'on' : ''}"></i>`;
+      }
+    }
+    const card = document.createElement('div');
+    card.className = `cloth-card${owned ? ' owned' : ''}${afford || owned ? '' : ' poor'}`;
+    card.innerHTML = `
+      <div class="cc-shape" style="grid-template-columns:repeat(${w},1fr)">${dots}</div>
+      <div class="cc-name">${c.name}</div>
+      <div class="cc-area">${clothArea(c.shape)} 格</div>
+      ${owned ? '<div class="cc-tag">正在使用</div>' : `<div class="cc-price">${c.price} 金</div>`}`;
+    card.title = c.desc || '';
+    card.addEventListener('click', () => onBuy(c.id));
+    root.appendChild(card);
+  }
+}
+
+
+// ============ 储物箱 ============
+
+/** 无限储物箱：一格一件，点一下取回背包 */
+export function renderStorage(root, run, { onTake } = {}) {
+  if (!root) return;
+  root.innerHTML = '';
+  for (const it of run.storage) {
+    const d = document.createElement('div');
+    d.className = 'box-item';
+    d.title = `${it.name}（点一下取回背包）`;
+    d.innerHTML = it.icon ? `<img src="${it.icon}" alt="">` : `<span>${it.name}</span>`;
+    if (onTake) d.addEventListener('click', () => onTake(it.uid));
+    root.appendChild(d);
+  }
 }

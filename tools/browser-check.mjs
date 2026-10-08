@@ -163,6 +163,31 @@ ok('左侧显示角色立绘', pickInfo.hasArt);
 ok('左侧显示属性表', pickInfo.stats.includes('生命'), pickInfo.stats.slice(0, 40));
 ok('右侧显示初始携带', pickInfo.items >= 1, `${pickInfo.items} 件`);
 ok('右侧显示可走分支', pickInfo.branches === 2, `${pickInfo.branches} 个`);
+// 选角色页：放大立绘 + 角色符号 + 正中开始按钮
+const pickLook = await cdp.eval(`
+  (() => {
+    const art = document.getElementById('pick-art');
+    const syms = document.querySelectorAll('#pick-symbols .psym');
+    const start = document.getElementById('btn-pick-start');
+    if (!art || !start) return null;
+    const r = art.getBoundingClientRect(), sr = start.getBoundingClientRect();
+    return {
+      artW: Math.round(r.width),
+      symbols: syms.length,
+      symOn: document.querySelectorAll('#pick-symbols .psym.on').length,
+      startW: Math.round(sr.width),
+      startLeft: Math.round(sr.left), startRight: Math.round(sr.right),
+      winW: window.innerWidth,
+    };
+  })()
+`);
+ok('选角色立绘放大到 200px 以上', pickLook && pickLook.artW >= 200, `${pickLook?.artW}px`);
+ok('每个角色都有一个小符号', pickLook && pickLook.symbols === 6, `${pickLook?.symbols} 个`);
+ok('当前角色符号高亮唯一', pickLook && pickLook.symOn === 1, `${pickLook?.symOn} 个`);
+ok('开始按钮在画面正中',
+  pickLook && Math.abs((pickLook.startLeft + pickLook.startRight) / 2 - pickLook.winW / 2) < 40,
+  `按钮中心 ${pickLook && Math.round((pickLook.startLeft + pickLook.startRight) / 2)} / 窗宽 ${pickLook?.winW}`);
+
 await cdp.shot('00-选角色页.png');
 
 // 换选一个角色，左侧要跟着变
@@ -201,25 +226,35 @@ const layoutInfo = await cdp.eval(`
     const b = bag.getBoundingClientRect(), r = rail.getBoundingClientRect(), bd = board.getBoundingClientRect();
     // 格子尺寸从 board 的实际列宽读，而不是 CSS 变量（那只是兜底默认值）
     const cols = (board.style.gridTemplateColumns || '').match(/([\\d.]+)px/);
+    const box = document.querySelector('.col-box');
+    const bx = box ? box.getBoundingClientRect() : null;
     return {
       bagW: Math.round(b.width), railW: Math.round(r.width),
       boardW: Math.round(bd.width), boardH: Math.round(bd.height),
       wrapH: Math.round(wrap.getBoundingClientRect().height),
       cell: cols ? Number(cols[1]) : 0,
+      boxW: bx ? Math.round(bx.width) : 0,
+      boxRight: bx ? Math.round(bx.right) : 0,
+      railLeft: Math.round(r.left),
     };
   })()
 `);
 ok('左栏没有虚胖（不超过背包太多）',
   layoutInfo && layoutInfo.bagW - layoutInfo.boardW < 40,
   JSON.stringify(layoutInfo));
-ok('商店栏比左栏宽（空间给了商店）',
-  layoutInfo && layoutInfo.railW > layoutInfo.bagW,
+// 背包格子 64px 是硬要求，左栏因此必然不窄，商店够用即可
+ok('商店栏宽度够摆货（>= 380）',
+  layoutInfo && layoutInfo.railW >= 380,
   `左 ${layoutInfo?.bagW} vs 右 ${layoutInfo?.railW}`);
+ok('储物箱在背包与商店之间',
+  layoutInfo && layoutInfo.boxW >= 160 && layoutInfo.boxRight <= layoutInfo.railLeft + 30,
+  JSON.stringify({ boxW: layoutInfo?.boxW, boxRight: layoutInfo?.boxRight, railLeft: layoutInfo?.railLeft }));
+// 格子锁死 64px 后，舞台高度 = 行数×64，不再随窗口拉伸，竖直居中会留少量边距
 ok('背包在竖直方向基本填满可用高度',
-  layoutInfo && layoutInfo.boardH >= layoutInfo.wrapH * 0.9,
+  layoutInfo && layoutInfo.boardH >= layoutInfo.wrapH * 0.85,
   `背包高 ${layoutInfo?.boardH} / 可用 ${layoutInfo?.wrapH}`);
-ok('格子尺寸仍然够大（>= 56px）',
-  layoutInfo && layoutInfo.cell >= 56,
+ok('格子固定 64px（不随窗口伸缩）',
+  layoutInfo && layoutInfo.cell === 64,
   `格子 ${layoutInfo?.cell}px`);
 
 // 只数当前可见页面里的面板（选角色页/战斗页的面板此时是隐藏的）
@@ -229,7 +264,7 @@ const panels = await cdp.eval(`
 ok('当前页面面板数量收敛到 5 个以内', panels <= 5, `${panels} 个`);
 
 const domNodes = await cdp.eval('document.querySelectorAll("*").length');
-ok('DOM 节点总数受控（< 800）', domNodes < 800, `${domNodes} 个`);
+ok('DOM 节点总数受控（< 900）', domNodes < 900, `${domNodes} 个`);
 
 const topStats = await cdp.eval('document.querySelectorAll("#stats .stat").length');
 ok('顶栏只留 5 项数值', topStats === 5, `${topStats}`);

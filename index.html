@@ -37,16 +37,17 @@
         <div id="pick-stats" class="stat-rows"></div>
       </section>
 
-      <!-- 中：角色列表 -->
+      <!-- 中：角色符号 + 角色列表 + 开始按钮 -->
       <section class="panel pick-list-panel">
         <div class="panel-head">
           <h2>选择角色</h2>
-          <span class="hint">背包尺寸相同，差别在携带的道具与被动</span>
+          <span class="hint">点符号快速换人，差别在携带道具与被动</span>
         </div>
+
+        <!-- 小的符号代表角色 -->
+        <div id="pick-symbols" class="pick-symbols"></div>
+
         <div id="pick-list" class="pick-list"></div>
-        <div class="actions">
-          <button class="primary" id="btn-pick-start">用这个角色开局</button>
-        </div>
       </section>
 
       <!-- 右：初始携带与分支 -->
@@ -57,6 +58,11 @@
         <div id="pick-branches" class="pick-branches"></div>
       </section>
 
+    </div>
+
+    <!-- 正中间的开始按钮：横跨整页，水平居中 -->
+    <div class="pick-start-row">
+      <button class="primary start-big" id="btn-pick-start">开 始 游 戏</button>
     </div>
   </div>
 
@@ -79,6 +85,19 @@
 
           <div id="detail" class="detail detail-strip"></div>
 
+          <!-- 布控制：挪动、翻转、旋转 -->
+          <div class="cloth-bar">
+            <span id="cloth-name" class="cloth-name">小背包布</span>
+            <span id="cloth-size" class="hint"></span>
+            <span class="spacer"></span>
+            <button class="sm" id="btn-cloth-up" title="布向上挪">↑</button>
+            <button class="sm" id="btn-cloth-down" title="布向下挪">↓</button>
+            <button class="sm" id="btn-cloth-left" title="布向左挪">←</button>
+            <button class="sm" id="btn-cloth-right" title="布向右挪">→</button>
+            <button class="sm" id="btn-cloth-flip" title="水平翻转布">⇋</button>
+            <button class="sm" id="btn-cloth-rot" title="旋转布">⟳</button>
+          </div>
+
           <div class="actions">
             <button class="primary" id="btn-battle">开始战斗</button>
             <button id="btn-refresh">刷新</button>
@@ -99,6 +118,18 @@
         </div>
       </section>
 
+      <!-- 中：储物箱，可以无限放东西 -->
+      <section class="col-box">
+        <div class="panel box-panel">
+          <div class="panel-head">
+            <h2>储物箱</h2>
+            <span id="box-count" class="hint"></span>
+          </div>
+          <div id="storage" class="storage"></div>
+          <div class="box-tip">不限容量。点道具取回背包，从背包装回来即可存放。</div>
+        </div>
+      </section>
+
       <!-- 右：商店 + 出售（合在一起） -->
       <aside class="col-rail">
         <div class="panel shop-panel">
@@ -109,11 +140,12 @@
           <div id="shop" class="shop-grid"></div>
           <div id="shop-hints" class="shop-hints"></div>
 
-          <!-- 扩容背包：花金币把格子买大 -->
-          <div class="expand-row">
-            <button id="btn-expand" class="sm">扩容背包</button>
-            <span id="expand-info" class="hint"></span>
+          <!-- 背包布：买更大的布就等于扩容 -->
+          <div class="panel-head" style="margin-top:9px">
+            <h2>背包布</h2>
+            <span class="hint">换上更大的布就是扩容</span>
           </div>
+          <div id="cloth-shop" class="cloth-shop"></div>
 
           <!-- 出售区紧挨货架 -->
           <div id="sell-zone" class="sell-zone">

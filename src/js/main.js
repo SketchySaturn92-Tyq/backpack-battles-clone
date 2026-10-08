@@ -22,6 +22,7 @@ import { BattleStage } from './ui/stage.js';
 import {
   renderBoard, renderShop, renderDetail, renderStats, renderCapacity, renderGuide,
   renderOverview, renderShopQuality, renderShopHints, upgradePopupHtml,
+  renderClothBar, renderClothShop, renderStorage, iconFor,
   renderFighterCard, moveChip, resetChip, setChipDragging, setHover, setSellActive,
   cellToPx, setCellSize, getLayout, getCellSize,
 } from './ui/render.js';
@@ -55,6 +56,7 @@ function cacheEls() {
   el.pickName = document.getElementById('pick-name');
   el.pickDesc = document.getElementById('pick-desc');
   el.pickStats = document.getElementById('pick-stats');
+  el.pickSymbols = document.getElementById('pick-symbols');
   el.pickList = document.getElementById('pick-list');
   el.pickItems = document.getElementById('pick-items');
   el.pickBranches = document.getElementById('pick-branches');
@@ -85,8 +87,17 @@ function cacheEls() {
   el.btnBattle = document.getElementById('btn-battle');
   el.btnRefresh = document.getElementById('btn-refresh');
   el.btnAuto = document.getElementById('btn-auto');
-  el.btnExpand = document.getElementById('btn-expand');
-  el.expandInfo = document.getElementById('expand-info');
+  el.storage = document.getElementById('storage');
+  el.boxCount = document.getElementById('box-count');
+  el.clothName = document.getElementById('cloth-name');
+  el.clothSize = document.getElementById('cloth-size');
+  el.clothShop = document.getElementById('cloth-shop');
+  el.btnClothUp = document.getElementById('btn-cloth-up');
+  el.btnClothDown = document.getElementById('btn-cloth-down');
+  el.btnClothLeft = document.getElementById('btn-cloth-left');
+  el.btnClothRight = document.getElementById('btn-cloth-right');
+  el.btnClothFlip = document.getElementById('btn-cloth-flip');
+  el.btnClothRot = document.getElementById('btn-cloth-rot');
   el.btnBack = document.getElementById('btn-back');
   el.btnRecipes = document.getElementById('btn-recipes');
   el.btnReset = document.getElementById('btn-reset');
@@ -131,6 +142,20 @@ function renderClassPage() {
     ['被动', cls.passive.name],
   ].map(([k, v]) => `<div class="sr"><span>${k}</span><b>${v}</b></div>`).join('')
     + `<div class="sr"><span>效果</span><b style="font-size:10.5px">${cls.passive.desc}</b></div>`;
+
+  // 中：小的角色符号，点一下就换人
+  if (el.pickSymbols) {
+    el.pickSymbols.innerHTML = CLASSES.map((c) => `
+      <button class="psym ${c.id === pickedClassId ? 'on' : ''}" data-class="${c.id}" title="${c.name}">
+        <img src="assets/chars/char-${heroArtIndex(c.id)}.png" alt="${c.name}">
+      </button>`).join('');
+    el.pickSymbols.querySelectorAll('.psym').forEach((b) => {
+      b.addEventListener('click', () => {
+        pickedClassId = b.dataset.class;
+        renderClassPage();
+      });
+    });
+  }
 
   // 中：角色卡（背包尺寸统一，所以卡片上不再列尺寸）
   el.pickList.innerHTML = CLASSES.map((c) => `
@@ -199,8 +224,13 @@ function renderAll() {
   });
 
   renderShop(el.shop, run.shop, run.header.gold, {
-    onBuy: doBuy,
+    onBuy: (i) => {
+      // 刚从商店拖走一件，pointerup 后浏览器还会补一个 click，挡住它避免买两次
+      if (shopDragEndAt && Date.now() - shopDragEndAt < 350) return;
+      doBuy(i);
+    },
     onLock: (i) => { run.shop.toggleLock(i); renderAll(); },
+    onDragStart: onShopDragStart,
   });
   renderShopQuality(el.shopQuality, run.shop);
   renderShopHints(el.shopHints, shopHints(run.board, run.shop.slots.filter((s) => !s.sold).map((s) => s.item)));
@@ -223,12 +253,10 @@ function renderAll() {
   el.btnBattle.disabled = !prep;
   el.btnRefresh.disabled = !prep || run.header.gold < run.refreshCost();
   el.btnAuto.disabled = !prep;
-  const canExp = run.canExpand();
-  const expCost = run.expandCost();
-  el.btnExpand.disabled = !prep || !canExp || run.header.gold < expCost;
-  el.expandInfo.textContent = canExp
-    ? `${expCost} 金 · 现在 ${run.board.cols}×${run.board.rows}`
-    : `已扩到最大 ${run.board.cols}×${run.board.rows}`;
+  renderClothBar(el.clothName, el.clothSize, run);
+  renderClothShop(el.clothShop, run, { onBuy: doBuyCloth });
+  renderStorage(el.storage, run, { onTake: doTakeFromBox });
+  if (el.boxCount) el.boxCount.textContent = run.storage.length ? `${run.storage.length} 件` : '空';
   el.btnRefresh.textContent = run.refreshCost() === 0 ? '刷新（免费）' : `刷新（${run.refreshCost()} 金）`;
 }
 
@@ -293,6 +321,98 @@ function toast(text) {
 
 // ============ 商店与卖出 ============
 
+// 从商店直接把道具拖进背包
+let shopDrag = null;
+let shopDragEndAt = 0;
+
+function onShopDragStart(index, ev, cardEl) {
+  if (!run || playing || run.phase !== PHASE.PREPARE) return;
+  const slot = run.shop.slots[index];
+  if (!slot || slot.sold) return;
+
+  const ghost = document.createElement('div');
+  ghost.className = 'shop-ghost';
+  ghost.innerHTML = `<img src="${iconFor(slot.item)}" alt="">`;
+  ghost.style.left = `${ev.clientX}px`;
+  ghost.style.top = `${ev.clientY}px`;
+  document.body.appendChild(ghost);
+
+  shopDrag = {
+    index,
+    item: slot.item,
+    shape: slot.item.shape,
+    ghost,
+    cardEl,
+    startX: ev.clientX,
+    startY: ev.clientY,
+    moved: false,
+  };
+
+  window.addEventListener('pointermove', onShopDragMove);
+  window.addEventListener('pointerup', onShopDragEnd);
+  window.addEventListener('pointercancel', onShopDragEnd);
+}
+
+function onShopDragMove(ev) {
+  if (!shopDrag) return;
+  if (Math.abs(ev.clientX - shopDrag.startX) + Math.abs(ev.clientY - shopDrag.startY) > 4) {
+    shopDrag.moved = true;
+  }
+  if (!shopDrag.moved) return;
+
+  shopDrag.ghost.style.left = `${ev.clientX}px`;
+  shopDrag.ghost.style.top = `${ev.clientY}px`;
+  shopDrag.ghost.classList.add('on');
+
+  const spot = gridAt(ev.clientX, ev.clientY);
+  if (spot && el.board) {
+    const ok = run.board.canPlace(shopDrag.shape, spot.x, spot.y);
+    setHover(el.board, run.board.footprint(shopDrag.shape, spot.x, spot.y), ok, spot);
+  } else if (el.board) {
+    setHover(el.board, null);
+  }
+}
+
+function onShopDragEnd(ev) {
+  if (!shopDrag) return;
+  window.removeEventListener('pointermove', onShopDragMove);
+  window.removeEventListener('pointerup', onShopDragEnd);
+  window.removeEventListener('pointercancel', onShopDragEnd);
+
+  const session = shopDrag;
+  shopDrag = null;
+  session.ghost.remove();
+  if (el.board) setHover(el.board, null);
+
+  if (!session.moved) return;          // 没挪动就是普通点击，交给 click 逻辑
+  shopDragEndAt = Date.now();
+
+  const spot = gridAt(ev.clientX, ev.clientY);
+  if (!spot) { toast('拖到背包的布上才能放下'); return; }
+
+  const res = run.buyAt(session.index, spot.x, spot.y);
+  if (!res.ok) toast(res.reason);
+  else if (!guidesDone.bought) {
+    guidesDone.bought = true;
+    toast('买好了。拖到布上的位置就能放下');
+  }
+  renderAll();
+}
+
+/** 屏幕坐标 → 背包格子坐标，不在背包范围内返回 null */
+function gridAt(cx, cy) {
+  if (!el.board) return null;
+  const r = el.board.getBoundingClientRect();
+  if (cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) return null;
+  const L = getLayout();
+  return {
+    x: Math.round((cx - r.left - L.PAD) / L.STEP),
+    y: Math.round((cy - r.top - L.PAD) / L.STEP),
+  };
+}
+
+
+
 function doBuy(i) {
   if (run.phase !== PHASE.PREPARE || playing) return;
   const res = run.buy(i);
@@ -305,14 +425,45 @@ function doBuy(i) {
   renderAll();
 }
 
-function doExpand() {
+function doBuyCloth(clothId) {
   if (!run || playing || run.phase !== PHASE.PREPARE) return;
-  const res = run.expandBag();
+  const res = run.buyCloth(clothId);
   if (!res.ok) { toast(res.reason); return; }
-  toast(`背包扩大到 ${res.cols}×${res.rows}`);
+  toast(`换上 ${run.header.clothName}，可用 ${res.area} 格`
+    + (res.dropped ? `（${res.dropped} 件放不下已折金）` : ''));
   renderAll();
-  // 网格变大后重新按可用空间定格子尺寸
-  requestAnimationFrame(() => { fitBoard(); fitBoard(); });
+}
+
+function doStore(uid) {
+  if (!run || playing || run.phase !== PHASE.PREPARE) return;
+  const res = run.storeItem(uid);
+  if (!res.ok) { toast(res.reason); renderAll(); return; }
+  if (selectedUid === uid) selectedUid = null;
+  toast('已收进储物箱，想用再点一下取回来');
+  renderAll();
+}
+
+function doTakeFromBox(uid) {
+  if (!run || playing || run.phase !== PHASE.PREPARE) return;
+  const res = run.takeItem(uid);
+  if (!res.ok) { toast(res.reason); return; }
+  selectedUid = uid;
+  renderAll();
+}
+
+function doMoveCloth(dx, dy) {
+  if (!run || playing || run.phase !== PHASE.PREPARE) return;
+  const res = run.moveCloth(dx, dy);
+  if (!res.ok) toast(res.reason);
+  renderAll();
+}
+
+function doClothTransform(kind) {
+  if (!run || playing || run.phase !== PHASE.PREPARE) return;
+  const res = kind === 'flip' ? run.flipCloth() : run.rotateCloth();
+  if (!res.ok) toast(res.reason);
+  else toast(kind === 'flip' ? '布已水平翻转' : '布已旋转');
+  renderAll();
 }
 
 function doSell(uid) {
@@ -393,6 +544,7 @@ function applyDragFrame() {
   const ok = run.board.canPlace(drag.shape, gx, gy, drag.uid);
   setHover(el.board, run.board.footprint(drag.shape, gx, gy), ok, { x: gx, y: gy });
   setSellActive(isOverSellZone(cx, cy));
+  setBoxActive(isOverStorageZone(cx, cy));
 }
 
 function onDragEnd(ev) {
@@ -415,11 +567,13 @@ function onDragEnd(ev) {
 
   setHover(root, null);
   setSellActive(false);
+  setBoxActive(false);
   resetChip(root, session.uid);
 
   if (!session.moved) { renderAll(); return; }
 
   if (isOverSellZone(ev.clientX, ev.clientY)) { doSell(session.uid); return; }
+  if (isOverStorageZone(ev.clientX, ev.clientY)) { doStore(session.uid); return; }
 
   const res = run.moveTo(session.uid, gx, gy);
   if (!res.ok) toast(res.reason);
@@ -428,6 +582,16 @@ function onDragEnd(ev) {
     toast('摆好了。同名同阶相邻会自动合成，宝石要贴着武器放');
   }
   renderAll();
+}
+
+function setBoxActive(on) {
+  if (el.storage) el.storage.classList.toggle('drop-on', !!on);
+}
+
+function isOverStorageZone(cx, cy) {
+  if (!el.storage || !run || run.phase !== PHASE.PREPARE) return false;
+  const r = el.storage.getBoundingClientRect();
+  return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
 }
 
 function isOverSellZone(cx, cy) {
@@ -508,7 +672,12 @@ function bindStaticEvents() {
 
   el.skipBtn.addEventListener('click', () => { stage?.skip(); });
 
-  el.btnExpand.addEventListener('click', doExpand);
+  el.btnClothUp.addEventListener('click', () => doMoveCloth(0, -1));
+  el.btnClothDown.addEventListener('click', () => doMoveCloth(0, 1));
+  el.btnClothLeft.addEventListener('click', () => doMoveCloth(-1, 0));
+  el.btnClothRight.addEventListener('click', () => doMoveCloth(1, 0));
+  el.btnClothFlip.addEventListener('click', () => doClothTransform('flip'));
+  el.btnClothRot.addEventListener('click', () => doClothTransform('rotate'));
   el.btnRecipes.addEventListener('click', showRecipes);
   el.btnReset.addEventListener('click', showClassPage);
   el.btnHelp.addEventListener('click', showHelp);

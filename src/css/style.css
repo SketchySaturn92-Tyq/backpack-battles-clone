@@ -25,7 +25,8 @@
   --cyan: #2f8a8a;
 
   /* 格子尺寸与间距由 JS 按可用空间写入，这里只是兜底默认值 */
-  --cell: 54px;
+  --cloth-edge: #6d4728;
+  --cell: 64px;
   --gap: 3px;
   --step: 57px;
   --pad: 8px;
@@ -165,7 +166,7 @@ html, body {
 
 .pick-hero { align-items: center; text-align: center; }
 .pick-art {
-  width: 148px; height: 148px; image-rendering: pixelated;
+  width: 236px; height: 236px; image-rendering: pixelated;
   filter: drop-shadow(0 6px 14px rgba(0,0,0,.45));
   margin: 4px auto 6px;
 }
@@ -174,6 +175,36 @@ html, body {
 .pick-hero .stat-rows { grid-template-columns: 1fr; width: 100%; text-align: left; }
 
 .pick-list-panel { min-height: 0; }
+
+/* 小的角色符号：点一下就换人 */
+.pick-symbols {
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+  padding: 4px 0 10px; flex: 0 0 auto;
+}
+.pick-symbols .psym {
+  width: 54px; height: 54px; padding: 3px; cursor: pointer;
+  border: 2px solid var(--wood); border-radius: 9px;
+  background: linear-gradient(180deg, #f4e6c6, var(--parch-2));
+  transition: transform .1s, box-shadow .12s, border-color .12s;
+}
+.pick-symbols .psym img { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+.pick-symbols .psym:hover { transform: translateY(-3px); }
+.pick-symbols .psym.on {
+  border-color: var(--gold-bright);
+  box-shadow: 0 0 0 2px rgba(255,214,120,.75), 0 5px 12px rgba(0,0,0,.35);
+  transform: translateY(-3px);
+}
+
+/* 正中间的开始按钮 */
+.pick-start-row {
+  display: flex; justify-content: center;
+  padding: 10px 0 2px; flex: 0 0 auto;
+}
+button.start-big {
+  min-width: 240px; min-height: 46px;
+  font-size: 17px; font-weight: 800; letter-spacing: 3px;
+  box-shadow: 0 0 0 2px var(--gold-bright), 0 6px 16px rgba(0,0,0,.35);
+}
 .pick-list {
   flex: 1; min-height: 0; overflow-y: auto;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
@@ -224,8 +255,8 @@ html, body {
 .stage-layout {
   flex: 1; min-height: 0;
   display: grid;
-  /* 左栏按背包实际需要收缩（不再吃掉整片剩余宽度），省下的全给商店 */
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  /* 三列：背包按 9×64 实际需要占位，中间储物箱固定窄栏，剩下的全给商店 */
+  grid-template-columns: minmax(0, auto) 196px minmax(0, 1fr);
   gap: 9px;
 }
 
@@ -248,17 +279,15 @@ html, body {
   overflow: hidden;
 }
 
+/* 舞台：9×7 的定位区，本身完全透明，只有一圈极淡的虚线提示范围 */
 #board {
   position: relative;
   display: grid;
   gap: var(--gap);
   padding: var(--pad);
-  background:
-    repeating-linear-gradient(45deg, rgba(0,0,0,.15) 0 4px, transparent 4px 9px),
-    linear-gradient(180deg, #2a1a10, #1a1009);
-  border: 2px solid var(--wood-darkest);
+  background: transparent;
+  border: 1px dashed rgba(240,220,170,.18);
   border-radius: 7px;
-  box-shadow: inset 0 3px 10px rgba(0,0,0,.7);
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -266,10 +295,24 @@ html, body {
 
 .cellbg {
   position: relative;
-  border-radius: 4px;
-  background: linear-gradient(180deg, rgba(220,190,140,.10), rgba(140,110,70,.06));
-  box-shadow: inset 0 0 0 1px rgba(200,170,120,.22);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
+
+/* 布：暖色布料质感，格子之间有缝线 */
+.cellbg.on-cloth {
+  background:
+    repeating-linear-gradient(45deg, rgba(255,255,255,.05) 0 2px, transparent 2px 4px),
+    linear-gradient(160deg, #d9c08a, #bfa064);
+  box-shadow: inset 0 0 0 1px rgba(120,90,50,.22);
+}
+
+/* 布的外边界：加粗一点，让人看出布的轮廓 */
+.cellbg.on-cloth.edge-t { border-top: 3px solid var(--cloth-edge); }
+.cellbg.on-cloth.edge-b { border-bottom: 3px solid var(--cloth-edge); }
+.cellbg.on-cloth.edge-l { border-left: 3px solid var(--cloth-edge); }
+.cellbg.on-cloth.edge-r { border-right: 3px solid var(--cloth-edge); }
 .cellbg[data-row]::after {
   content: attr(data-row);
   position: absolute; left: 3px; top: 1px;
@@ -487,12 +530,96 @@ button.sm { padding: 3px 9px; font-size: 11px; border-radius: 5px; min-height: 2
   border: 1px solid #5f9a98; color: #1f5452;
 }
 
-/* 扩容背包 */
-.expand-row {
-  display: flex; align-items: center; gap: 8px;
-  margin-top: 8px; flex: 0 0 auto;
+/* 储物箱：中间一列，不限容量 */
+.col-box { min-width: 0; display: flex; flex-direction: column; }
+.box-panel { flex: 1; min-height: 0; }
+.box-tip { font-size: 10px; color: #7a6440; line-height: 1.5; margin-top: 7px; }
+.storage {
+  flex: 1; min-height: 120px; overflow-y: auto;
+  display: grid; grid-template-columns: repeat(auto-fill, 56px);
+  gap: 6px; align-content: start;
+  padding: 6px;
+  background: rgba(90,62,32,.13);
+  border: 1px dashed rgba(150,120,70,.55); border-radius: 7px;
 }
-.expand-row .hint { font-size: 10.5px; color: #7a6440; }
+.storage:empty::after {
+  content: '空箱子';
+  grid-column: 1 / -1; text-align: center;
+  font-size: 10.5px; color: #8a7550; padding: 18px 0;
+}
+.storage.drop-on {
+  border-color: var(--gold-bright);
+  background: rgba(255,214,120,.22);
+}
+.box-item {
+  position: relative; width: 56px; height: 56px; cursor: pointer;
+  border: 1px solid var(--wood); border-radius: 6px;
+  background: linear-gradient(180deg, #f4e6c6, var(--parch-2));
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .08s, filter .12s;
+}
+.box-item:hover { transform: translateY(-2px); filter: brightness(1.06); }
+.box-item img { max-width: 46px; max-height: 46px; image-rendering: pixelated; }
+
+/* 从商店拖出来的那个跟随光标的小图标 */
+.shop-ghost {
+  position: fixed; z-index: 9999; pointer-events: none;
+  width: 56px; height: 56px; margin: -28px 0 0 -28px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 9px; opacity: .55;
+  transition: opacity .1s;
+}
+.shop-ghost.on {
+  opacity: 1;
+  background: rgba(255,236,190,.9);
+  border: 2px solid var(--gold-bright);
+  box-shadow: 0 8px 20px rgba(0,0,0,.45);
+}
+.shop-ghost img { max-width: 46px; max-height: 46px; image-rendering: pixelated; }
+
+/* 布控制条 */
+.cloth-bar {
+  display: flex; align-items: center; gap: 5px;
+  margin-top: 8px; padding: 4px 7px;
+  background: rgba(255,250,235,.5);
+  border: 1px solid rgba(150,120,70,.4);
+  border-radius: 6px;
+  flex: 0 0 auto;
+}
+.cloth-bar .cloth-name { font-size: 11.5px; font-weight: 700; color: #4a2f12; white-space: nowrap; }
+.cloth-bar .hint { font-size: 10px; color: #7a6440; }
+.cloth-bar button { padding: 2px 7px; font-size: 12px; min-height: 24px; }
+
+/* 背包布货架 */
+.cloth-shop {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 6px; align-content: start;
+  max-height: 190px; overflow-y: auto;
+  flex: 0 0 auto;
+}
+.cloth-card {
+  position: relative; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 6px 5px;
+  background: linear-gradient(180deg, #f2e2bc, var(--parch-2));
+  border: 2px solid var(--wood); border-radius: 6px;
+  box-shadow: 0 0 0 1px var(--gold-deep), 0 3px 8px rgba(0,0,0,.28);
+  transition: transform .08s, filter .12s;
+}
+.cloth-card:hover { transform: translateY(-2px); filter: brightness(1.05); }
+.cloth-card.owned { border-color: var(--gold-bright); box-shadow: 0 0 0 2px var(--gold-bright); }
+.cloth-card.poor { opacity: .6; }
+.cloth-card .cc-shape { display: grid; gap: 1px; }
+.cloth-card .cc-shape i { width: 7px; height: 7px; border-radius: 1px; background: rgba(120,90,50,.18); display: block; }
+.cloth-card .cc-shape i.on { background: linear-gradient(160deg, #d9c08a, #bfa064); }
+.cloth-card .cc-name { font-size: 11px; font-weight: 700; color: #3a2412; text-align: center; line-height: 1.15; }
+.cloth-card .cc-area { font-size: 9.5px; color: #7a6440; }
+.cloth-card .cc-price {
+  font-size: 11px; font-weight: 800; color: var(--gold-bright);
+  background: linear-gradient(180deg, #4a2f18, #2e1c0e);
+  border: 1px solid var(--gold-deep); border-radius: 4px; padding: 0 7px;
+}
+.cloth-card .cc-tag { font-size: 9px; color: #8a5c10; font-weight: 700; }
 
 /* 出售区：紧挨货架 */
 .sell-zone {
@@ -913,6 +1040,7 @@ button.sm { padding: 3px 9px; font-size: 11px; border-radius: 5px; min-height: 2
   /* 商店：横向滑动的一排，省高度 */
   .shop-grid {
     grid-template-columns: none;
+    grid-auto-rows: min-content;
     grid-auto-flow: column;
     grid-auto-columns: 108px;
     overflow-x: auto; overflow-y: hidden;

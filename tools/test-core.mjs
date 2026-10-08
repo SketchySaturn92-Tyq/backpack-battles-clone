@@ -366,6 +366,7 @@ section('商店');
 section('合成');
 {
   const r = new Run({ seed: 9, classId: 'warrior' });
+  r.board.cloth = null;      // 这段测合成逻辑本身，先摘掉布的区域约束
   r.board.clear();
   const a = { ...ITEM_BY_ID.sword, uid: 'a' };
   const b = { ...ITEM_BY_ID.sword, uid: 'b' };
@@ -387,17 +388,19 @@ section('合成');
 
   // 不相邻不合成
   const r2 = new Run({ seed: 10, classId: 'warrior' });
+  r2.board.cloth = null;
   r2.board.clear();
   const x = { ...ITEM_BY_ID.dagger, uid: 'x' };
   const y = { ...ITEM_BY_ID.dagger, uid: 'y' };
   r2.board.place(x, 0, 0, x.shape);
-  r2.board.place(y, 5, 6, y.shape);   // 匕首 1×2，放最右下角，与 x 不相邻
+  r2.board.place(y, 7, 5, y.shape);   // 匕首 1×2，放右下角（舞台 9×7），与 x 不相邻
   ok('两件都在场上', r2.board.count() === 2, `${r2.board.count()}`);
   ok('不相邻不合成', r2.resolveFusions().length === 0 && r2.board.count() === 2);
 
   // 驯兽师合成加血
   const beast = new Run({ seed: 11, classId: 'ranger' });
   beast.chooseBranch('beastmaster');
+  beast.board.cloth = null;
   beast.board.clear();
   const hpBefore = beast.header.hp;
   const m1 = { ...ITEM_BY_ID.sword, uid: 'm1' };
@@ -473,39 +476,51 @@ section('战斗与事件流');
     `${farUnit.weapons[0].damage} vs ${soloUnit.weapons[0].damage}`);
 }
 
-// ============ 8b. 背包扩容 ============
-section('背包扩容');
+// ============ 8b. 背包布 ============
+section('背包布');
 {
   const r = new Run({ seed: 21, classId: 'warrior' });
-  const c0 = r.board.cols, r0 = r.board.rows;
-  ok('初始背包 7×9', c0 === 7 && r0 === 9, `${c0}×${r0}`);
-  ok('开局就能扩容', r.canExpand());
+  ok('舞台固定 9×7', r.board.cols === 9 && r.board.rows === 7, `${r.board.cols}×${r.board.rows}`);
+  ok('开局铺了初始布', !!r.board.cloth, r.header.clothName);
 
-  const cost0 = r.expandCost();
-  r.header.gold = cost0 - 1;
-  ok('金币不够时拒绝扩容', r.expandBag().ok === false);
+  const onCloth = r.board.clothCells().size;
+  ok('初始布 20 格', onCloth === 20, `${onCloth}`);
+
+  let off = 0;
+  for (let y = 0; y < r.board.rows; y++) {
+    for (let x = 0; x < r.board.cols; x++) if (!r.board.onCloth(x, y)) off++;
+  }
+  ok('舞台上有布外的格子', off === 63 - onCloth, `布外 ${off} 格`);
+  ok('布外放不下最小道具', r.board.canPlace(['X'], 0, 0) === false);
 
   r.header.gold = 200;
-  const before = r.board.list().map((e) => `${e.item.uid}@${e.x},${e.y}`).sort().join('|');
-  const res = r.expandBag();
-  ok('花钱能扩容', res.ok === true, JSON.stringify(res));
-  ok('扩容后列 +1', r.board.cols === c0 + 1, `${r.board.cols}`);
-  ok('扩容按价格扣钱', r.header.gold === 200 - cost0, `${r.header.gold}`);
-  const after = r.board.list().map((e) => `${e.item.uid}@${e.x},${e.y}`).sort().join('|');
-  ok('扩容不移动已有道具', before === after, `${before} → ${after}`);
-  ok('扩容会涨价', r.expandCost() > cost0, `${cost0} → ${r.expandCost()}`);
+  const before = r.header.clothId;
+  const res = r.buyCloth('cloth-big');
+  ok('能买布换上', res.ok === true, JSON.stringify(res));
+  ok('clothId 已切换', r.header.clothId === 'cloth-big' && r.header.clothId !== before);
+  ok('大布格数变多', r.board.clothCells().size === 30, `${r.board.clothCells().size}`);
+  ok('换布后原有道具还在', r.board.list().length >= 2, `${r.board.list().length}`);
+  ok('按价格扣了金币', r.header.gold === 200 - 30, `${r.header.gold}`);
 
-  let guard = 0;
-  while (r.canExpand() && guard++ < 30) { r.header.gold = 999; r.expandBag(); }
-  ok('能一路扩到上限', !r.canExpand(), `${r.board.cols}×${r.board.rows}`);
-  ok('上限是 9×11', r.board.cols === 9 && r.board.rows === 11, `${r.board.cols}×${r.board.rows}`);
-  ok('到上限后拒绝扩容', r.expandBag().ok === false);
-  ok('扩到上限后道具都还在', r.board.list().length >= 2, `${r.board.list().length} 件`);
-  ok('扩容后仍能放新道具', (() => {
-    const it = { ...ITEM_BY_ID.dagger, uid: 'after-expand' };
-    const spot = r.board.findFreeSpot(it.shape);
-    return !!spot && r.board.place(it, spot.x, spot.y, it.shape);
-  })());
+  const posBefore = new Map(r.board.list().map((e) => [e.item.uid, { x: e.x, y: e.y }]));
+  const mv = r.moveCloth(-1, 0);
+  ok('能挪动布', mv.ok === true, JSON.stringify(mv));
+  const allShifted = r.board.list().every((e) => {
+    const o = posBefore.get(e.item.uid);
+    return o && e.x === o.x - 1 && e.y === o.y;
+  });
+  ok('挪布时道具跟着走', r.board.list().length > 0 && allShifted,
+    r.board.list().map((e) => `${e.item.uid}@${e.x},${e.y}`).join('|'));
+
+  ok('能水平翻转布', r.flipCloth().ok === true);
+  ok('能旋转布', r.rotateCloth().ok === true);
+  ok('翻转旋转后道具仍在布上',
+    r.board.list().every((e) => r.board.footprint(e.shape, e.x, e.y).every((c) => r.board.onCloth(c.x, c.y))),
+    `${r.board.list().length} 件`);
+
+  ok('重复买同一块布被拒', r.buyCloth('cloth-big').ok === false);
+  r.header.gold = 0;
+  ok('钱不够买不了布', r.buyCloth('cloth-l').ok === false);
 }
 
 // ============ 9. 对手池 ============
