@@ -69,13 +69,59 @@ export class Board {
     return resolvedShape(this.cloth.cloth.shape, this.cloth);
   }
 
-  /** 布覆盖的格子集合；返回 null 表示不限制 */
+  /** 布覆盖的格子集合；返回 null 表示不限制。含后来扩张出来的格子 */
   clothCells() {
     const shape = this.clothShape();
     if (!shape) return null;
     const set = new Set();
     for (const c of cells(shape)) set.add(`${this.cloth.x + c.x},${this.cloth.y + c.y}`);
+    for (const k of (this.cloth.extra || [])) set.add(k);
     return set;
+  }
+
+  /** 布当前的外接范围 */
+  clothBounds() {
+    const set = this.clothCells();
+    if (!set) return null;
+    let minX = 99, minY = 99, maxX = -1, maxY = -1;
+    for (const k of set) {
+      const [x, y] = k.split(',').map(Number);
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    }
+    return { minX, minY, maxX, maxY };
+  }
+
+  /**
+   * 往某个方向给布加一排（玩家买东西后自己选方向）。
+   * 扩张只加格子，不动原有格局，所以已经摆好的道具位置不受影响。
+   */
+  expandCloth(dir) {
+    if (!this.cloth) return { ok: false, reason: '还没有铺布' };
+    const b = this.clothBounds();
+    const strip = [];
+    // 新加的一排要和当前布在同一段范围内对齐，一端不够就补到 1 格
+    if (dir === 'up' || dir === 'down') {
+      const y = dir === 'up' ? b.minY - 1 : b.maxY + 1;
+      for (let x = b.minX; x <= b.maxX; x++) strip.push(`${x},${y}`);
+    } else {
+      const x = dir === 'left' ? b.minX - 1 : b.maxX + 1;
+      for (let y = b.minY; y <= b.maxY; y++) strip.push(`${x},${y}`);
+    }
+    if (!strip.length) return { ok: false, reason: '这个方向没法扩张' };
+
+    const already = this.clothCells();
+    const add = [];
+    for (const k of strip) {
+      const [x, y] = k.split(',').map(Number);
+      if (!this.inBounds(x, y)) return { ok: false, reason: '已经顶到背包边界了' };
+      if (!already.has(k)) add.push(k);
+    }
+    if (!add.length) return { ok: false, reason: '这一排已经铺过了' };
+
+    this.cloth.extra = [...(this.cloth.extra || []), ...add];
+    this._order = null;
+    return { ok: true, added: add.length, total: this.clothCells().size };
   }
 
   /** 这一格是否在布上（无布时一律算在） */
@@ -88,7 +134,7 @@ export class Board {
   /** 铺一块布；不传锚点就居中 */
   setCloth(clothDef, anchor = null) {
     const a = anchor || centeredAnchor(clothDef.shape);
-    this.cloth = { cloth: clothDef, x: a.x, y: a.y, flipped: false, rotation: 0 };
+    this.cloth = { cloth: clothDef, x: a.x, y: a.y, flipped: false, rotation: 0, extra: [] };
     this._order = null;
     return this.returnItemsToCloth();
   }
@@ -108,10 +154,22 @@ export class Board {
         if (!this.inBounds(c.x, c.y)) return { ok: false, reason: '道具会被推出背包' };
       }
     }
+    // 扩张出来的格子也要落回舞台内
+    for (const k of (this.cloth.extra || [])) {
+      const [x, y] = k.split(',').map(Number);
+      if (!this.inBounds(x + dx, y + dy)) return { ok: false, reason: '扩张的格子会被推出背包' };
+    }
     this.items.clear();
     this.cells.fill(null);
     this.cloth.x = nx;
     this.cloth.y = ny;
+    // 扩张出来的格子是绝对坐标，布整体移动时要一起挪
+    if (this.cloth.extra?.length) {
+      this.cloth.extra = this.cloth.extra.map((k) => {
+        const [x, y] = k.split(',').map(Number);
+        return `${x + dx},${y + dy}`;
+      });
+    }
     this._order = null;
     for (const e of moved) this.place(e.item, e.x, e.y, e.shape);
     return { ok: true };
@@ -141,6 +199,13 @@ export class Board {
     }
     this.cloth = trial;
     this._order = null;
+    // 翻转/旋转后，越界的扩张格子就失效（布的主体仍是那块布）
+    if (this.cloth.extra?.length) {
+      this.cloth.extra = this.cloth.extra.filter((k) => {
+        const [x, y] = k.split(',').map(Number);
+        return this.inBounds(x, y);
+      });
+    }
     return { ok: true, dropped: this.returnItemsToCloth() };
   }
 

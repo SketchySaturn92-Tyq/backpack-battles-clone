@@ -30,6 +30,8 @@ export function cellToPx(x, y) {
 }
 
 export function iconFor(item) { return `assets/icons/${item.id}.png`; }
+/** 横放时用的横版图（竖版顺时针转 90°，tools/gen_rot_icons.py 生成） */
+export function iconForRot(item) { return `assets/icons/rot/${item.id}.png`; }
 export function catName(cat) { return CATEGORIES[cat]?.name || cat; }
 export function tierColor(tier) { return (RARITY[tier] || RARITY[1]).color; }
 
@@ -111,9 +113,45 @@ export function renderBoard(root, board, opts = {}) {
 
     const inner = document.createElement('div');
     inner.className = 'inner';
-    inner.innerHTML = `
-      <img class="art" src="${iconFor(entry.item)}" alt="" onerror="this.style.display='none'">
-      <span class="nm">${entry.item.name}</span>`;
+    // 立绘按占格逐格铺：图先拉伸到整个外接框，每个占格是一块瓦片、只露出自己那块。
+    // 好处：不占的格子不会露出图（不会盖住邻格的东西），图本身也不会被外接框裁掉。
+    const boxW = (entry.w ?? size(entry.shape).w * STEP - GAP);
+    const boxH = (entry.h ?? size(entry.shape).h * STEP - GAP);
+    const src = iconFor(entry.item);
+    // 立绘贴格：
+    //   1) 整张图按 contain 放进外接框 —— 不放大、不裁切，图是完整的
+    //   2) 再用多层 mask 把「不占的格子」挡掉 —— 不会盖到邻格的家具上
+    // 横放时换成真正的横版图（assets/icons/rot/），不是把竖图压扁。
+    const s0 = size(entry.item.shape);
+    const s1 = size(entry.shape);
+    const turned = (s0.w !== s0.h) && ((s0.w > s0.h) !== (s1.w > s1.h));
+
+    const art = document.createElement('img');
+    art.className = 'art';
+    art.alt = '';
+    art.src = turned ? iconForRot(entry.item) : src;
+    art.onerror = () => { art.style.display = 'none'; };
+
+    const holes = cells(entry.shape);
+    if (holes.length) {
+      const layers = holes.map(() => 'linear-gradient(#000, #000)');
+      const sizes = holes.map(() => `${CELL}px ${CELL}px`);
+      const spots = holes.map((c) => `${c.x * STEP}px ${c.y * STEP}px`);
+      art.style.maskImage = layers.join(',');
+      art.style.maskSize = sizes.join(',');
+      art.style.maskPosition = spots.join(',');
+      art.style.maskRepeat = 'no-repeat';
+      art.style.webkitMaskImage = layers.join(',');
+      art.style.webkitMaskSize = sizes.join(',');
+      art.style.webkitMaskPosition = spots.join(',');
+      art.style.webkitMaskRepeat = 'no-repeat';
+    }
+    inner.appendChild(art);
+
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = entry.item.name;
+    inner.appendChild(nm);
     el.appendChild(inner);
 
     el.addEventListener('pointerdown', (ev) => onGrab?.(ev, entry));
@@ -491,41 +529,36 @@ export function renderOverview(el, ov, board) {
 export function renderClothBar(elName, elSize, run) {
   const def = run.currentCloth();
   const st = run.board.cloth;
+  const b = run.board.clothBounds();
   if (elName) elName.textContent = def.name;
-  if (elSize) {
-    const { w, h } = clothSize(run.board.clothShape() || def.shape);
-    elSize.textContent = `${w}×${h} · ${clothArea(def.shape)} 格 · 位置 ${st.x + 1},${st.y + 1}`;
+  if (elSize && b) {
+    const w = b.maxX - b.minX + 1, h = b.maxY - b.minY + 1;
+    const extra = (st.extra || []).length;
+    elSize.textContent = `${w}×${h} · 可放 ${run.board.clothCells().size} 格`
+      + (extra ? `（扩张 +${extra}）` : '');
   }
 }
 
-/** 布货架：点一下就换上，等于扩容 */
-export function renderClothShop(root, run, { onBuy }) {
+/** 背包布扩张：显示当前格子数与价格，四个方向各一个按钮 */
+export function renderClothExpand(root, info, { onExpand } = {}) {
   if (!root) return;
-  root.innerHTML = '';
-  const cur = run.header.clothId;
-  for (const c of shopCloths()) {
-    const owned = cur === c.id;
-    const afford = run.header.gold >= c.price;
-    const { w, h } = clothSize(c.shape);
-    let dots = '';
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        dots += `<i class="${c.shape[y]?.[x] === 'X' ? 'on' : ''}"></i>`;
-      }
-    }
-    const card = document.createElement('div');
-    card.className = `cloth-card${owned ? ' owned' : ''}${afford || owned ? '' : ' poor'}`;
-    card.innerHTML = `
-      <div class="cc-shape" style="grid-template-columns:repeat(${w},1fr)">${dots}</div>
-      <div class="cc-name">${c.name}</div>
-      <div class="cc-area">${clothArea(c.shape)} 格</div>
-      ${owned ? '<div class="cc-tag">正在使用</div>' : `<div class="cc-price">${c.price} 金</div>`}`;
-    card.title = c.desc || '';
-    card.addEventListener('click', () => onBuy(c.id));
-    root.appendChild(card);
-  }
+  root.innerHTML = `
+    <div class="ce-info">
+      <span class="ce-name">${info.name}</span>
+      <span class="ce-cells">${info.cells} / ${info.max} 格</span>
+      <span class="ce-cost">下一排 ${info.cost} 金</span>
+    </div>
+    <div class="ce-row">
+      <span class="ce-label">往哪边扩</span>
+      <button class="sm" data-dir="left" title="向左扩一排">←</button>
+      <button class="sm" data-dir="up" title="向上扩一排">↑</button>
+      <button class="sm" data-dir="down" title="向下扩一排">↓</button>
+      <button class="sm" data-dir="right" title="向右扩一排">→</button>
+    </div>`;
+  root.querySelectorAll('button[data-dir]').forEach((b) => {
+    b.addEventListener('click', () => onExpand?.(b.dataset.dir));
+  });
 }
-
 
 // ============ 储物箱 ============
 

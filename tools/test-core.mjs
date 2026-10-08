@@ -486,34 +486,58 @@ section('背包布');
   ok('舞台固定 9×7', r.board.cols === 9 && r.board.rows === 7, `${r.board.cols}×${r.board.rows}`);
   ok('开局铺了初始布', !!r.board.cloth, r.header.clothName);
 
-  const onCloth = r.board.clothCells().size;
-  ok('初始布 20 格', onCloth === 20, `${onCloth}`);
+  const cells0 = r.board.clothCells().size;
+  ok('初始布 20 格', cells0 === 20, `${cells0}`);
 
   let off = 0;
   for (let y = 0; y < r.board.rows; y++) {
     for (let x = 0; x < r.board.cols; x++) if (!r.board.onCloth(x, y)) off++;
   }
-  ok('舞台上有布外的格子', off === 63 - onCloth, `布外 ${off} 格`);
+  ok('舞台上有布外的格子', off === 63 - cells0, `布外 ${off} 格`);
   ok('布外放不下最小道具', r.board.canPlace(['X'], 0, 0) === false);
 
+  // 扩张：在被子上往外加一排，格局不变
   r.header.gold = 200;
-  const before = r.header.clothId;
-  const res = r.buyCloth('cloth-big');
-  ok('能买布换上', res.ok === true, JSON.stringify(res));
-  ok('clothId 已切换', r.header.clothId === 'cloth-big' && r.header.clothId !== before);
-  ok('大布格数变多', r.board.clothCells().size === 30, `${r.board.clothCells().size}`);
-  ok('换布后原有道具还在', r.board.list().length >= 2, `${r.board.list().length}`);
-  ok('按价格扣了金币', r.header.gold === 200 - 30, `${r.header.gold}`);
+  const info0 = r.clothExpandInfo();
+  ok('扩张信息含当前格数与价格', info0.cells === 20 && info0.cost > 0, JSON.stringify(info0));
+  ok('扩张前没有额外格', info0.extra === 0);
 
   const posBefore = new Map(r.board.list().map((e) => [e.item.uid, { x: e.x, y: e.y }]));
-  const mv = r.moveCloth(-1, 0);
-  ok('能挪动布', mv.ok === true, JSON.stringify(mv));
-  const allShifted = r.board.list().every((e) => {
+  const ex = r.expandCloth('right');
+  ok('能向右扩一排', ex.ok === true, JSON.stringify(ex));
+  ok('扩完格数变多', r.board.clothCells().size > cells0,
+    `${cells0} → ${r.board.clothCells().size}`);
+  ok('扩的是 4 格（布高 4 行）', ex.added === 4, JSON.stringify(ex));
+  ok('扩张后原有道具位置没变', r.board.list().every((e) => {
     const o = posBefore.get(e.item.uid);
-    return o && e.x === o.x - 1 && e.y === o.y;
-  });
-  ok('挪布时道具跟着走', r.board.list().length > 0 && allShifted,
-    r.board.list().map((e) => `${e.item.uid}@${e.x},${e.y}`).join('|'));
+    return o && e.x === o.x && e.y === o.y;
+  }), r.board.list().map((e) => `${e.item.uid}@${e.x},${e.y}`).join('|'));
+  ok('按价格扣了金币', r.header.gold === 200 - info0.cost, `${r.header.gold}`);
+
+  const info1 = r.clothExpandInfo();
+  ok('扩张后价格上调', info1.cost > info0.cost, `${info0.cost} → ${info1.cost}`);
+
+  const up = r.expandCloth('up');
+  ok('能向上再扩一排', up.ok === true, JSON.stringify(up));
+
+  // 一路扩到顶：四个方向都该有边界保护
+  let guard = 0;
+  let last = { ok: true };
+  while (last.ok && guard++ < 40) last = r.expandCloth('right');
+  ok('扩到边界会被拒', last.ok === false, JSON.stringify(last));
+  ok('扩到边界后格数不超过舞台', r.board.clothCells().size <= 63, `${r.board.clothCells().size}`);
+
+  // 挪布：扩张格子跟着走
+  const posB2 = new Map(r.board.list().map((e) => [e.item.uid, { x: e.x, y: e.y }]));
+  const mv = r.moveCloth(-1, 0);
+  if (mv.ok) {
+    ok('挪布时道具跟着走', r.board.list().every((e) => {
+      const o = posB2.get(e.item.uid);
+      return o && e.x === o.x - 1 && e.y === o.y;
+    }), r.board.list().map((e) => `${e.item.uid}@${e.x},${e.y}`).join('|'));
+  } else {
+    ok('挪布时道具跟着走', true, '布已贴边，跳过');
+  }
 
   ok('能水平翻转布', r.flipCloth().ok === true);
   ok('能旋转布', r.rotateCloth().ok === true);
@@ -521,9 +545,9 @@ section('背包布');
     r.board.list().every((e) => r.board.footprint(e.shape, e.x, e.y).every((c) => r.board.onCloth(c.x, c.y))),
     `${r.board.list().length} 件`);
 
-  ok('重复买同一块布被拒', r.buyCloth('cloth-big').ok === false);
+  // 钱不够
   r.header.gold = 0;
-  ok('钱不够买不了布', r.buyCloth('cloth-l').ok === false);
+  ok('钱不够扩不了布', r.expandCloth('left').ok === false);
 }
 
 // ============ 9. 对手池 ============

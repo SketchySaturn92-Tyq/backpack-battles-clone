@@ -150,36 +150,42 @@ export class Run {
     return { ok: true };
   }
 
-  // ---------- 背包布 ----------
+  // ---------- 背包布（在被动态上扩张） ----------
 
   /** 当前用的布 */
   currentCloth() {
     return CLOTH_BY_ID[this.header.clothId] || STARTER_CLOTH;
   }
 
+  /** 当前可用的格子数、已扩张格数、下一排的价格 */
+  clothExpandInfo() {
+    const set = this.board.clothCells();
+    const extra = (this.board.cloth?.extra || []).length;
+    return {
+      cells: set ? set.size : clothArea(this.currentCloth().shape),
+      extra,
+      cost: 6 + extra * 2,
+      max: STAGE.cols * STAGE.rows,
+      name: this.currentCloth().name,
+    };
+  }
+
   /**
-   * 换一块布（商店里的「扩容」就是这个）。
-   * 布变大或换形状后，原来落在布外的道具会尽量搬回布上，
-   * 实在放不下的折成金币退给玩家，不会凭空消失。
+   * 扩张背包布：花金币往某个方向加一排。
+   * 只加格子、不改原有格局，所以已经摆好的道具不会被打乱。
    */
-  buyCloth(clothId) {
-    const def = CLOTH_BY_ID[clothId];
-    if (!def) return { ok: false, reason: '没有这块布' };
-    if (this.header.clothId === clothId) return { ok: false, reason: '已经在用这块布了' };
-    if (this.header.gold < def.price) return { ok: false, reason: `需要 ${def.price} 金` };
+  expandCloth(dir) {
+    const info = this.clothExpandInfo();
+    if (info.cells >= info.max) return { ok: false, reason: '背包布已经铺满整个舞台了' };
+    if (this.header.gold < info.cost) return { ok: false, reason: `需要 ${info.cost} 金` };
 
-    this.header.gold -= def.price;
-    const dropped = this.board.setCloth(def) || [];
-    this.header.clothId = clothId;
-    this.header.clothName = def.name;
+    const res = this.board.expandCloth(dir);
+    if (!res.ok) return res;
 
-    let refund = 0;
-    for (const it of dropped) refund += Math.max(1, Math.floor((it.price || 0) / 2));
-    if (refund) this.header.gold += refund;
-
-    this.note(`换上 ${def.name}（-${def.price} 金）`
-      + (dropped.length ? `，${dropped.length} 件放不下已折 ${refund} 金` : ''));
-    return { ok: true, refund, dropped: dropped.length, area: clothArea(def.shape) };
+    this.header.gold -= info.cost;
+    const dirName = { up: '上', down: '下', left: '左', right: '右' }[dir] || dir;
+    this.note(`背包布向${dirName}扩了一排（+${res.added} 格，-${info.cost} 金）`);
+    return { ok: true, ...res, cost: info.cost };
   }
 
   // ---------- 储物箱 ----------

@@ -23,7 +23,7 @@ import { STAGE, STARTER_CLOTH, clothArea } from './data/cloths.js';
 import {
   renderBoard, renderShop, renderDetail, renderStats, renderCapacity, renderGuide,
   renderOverview, renderShopQuality, renderShopHints, upgradePopupHtml,
-  renderClothBar, renderClothShop, renderStorage, iconFor, renderMiniBoard,
+  renderClothBar, renderClothExpand, renderStorage, iconFor, renderMiniBoard,
   renderFighterCard, moveChip, resetChip, setChipDragging, setHover, setSellActive,
   cellToPx, setCellSize, getLayout, getCellSize,
 } from './ui/render.js';
@@ -92,7 +92,7 @@ function cacheEls() {
   el.boxCount = document.getElementById('box-count');
   el.clothName = document.getElementById('cloth-name');
   el.clothSize = document.getElementById('cloth-size');
-  el.clothShop = document.getElementById('cloth-shop');
+  el.clothExpand = document.getElementById('cloth-expand');
   el.btnClothUp = document.getElementById('btn-cloth-up');
   el.btnClothDown = document.getElementById('btn-cloth-down');
   el.btnClothLeft = document.getElementById('btn-cloth-left');
@@ -256,13 +256,14 @@ function renderAll() {
   el.btnRefresh.disabled = !prep || run.header.gold < run.refreshCost();
   el.btnAuto.disabled = !prep;
   renderClothBar(el.clothName, el.clothSize, run);
-  renderClothShop(el.clothShop, run, { onBuy: doBuyCloth });
+  renderClothExpand(el.clothExpand, run.clothExpandInfo(), { onExpand: doExpandCloth });
   renderStorage(el.storage, run, { onTake: doTakeFromBox });
   if (el.boxCount) el.boxCount.textContent = run.storage.length ? `${run.storage.length} 件` : '空';
   el.btnRefresh.textContent = run.refreshCost() === 0 ? '刷新（免费）' : `刷新（${run.refreshCost()} 金）`;
 }
 
 function renderLog() {
+  if (!el.log) return;   // 事件面板已下线，日志只留在数据里
   el.log.innerHTML = run.log.slice(-40).map((l) => `<div class="lg">${l.text}</div>`).join('');
   el.log.scrollTop = el.log.scrollHeight;
 }
@@ -427,12 +428,11 @@ function doBuy(i) {
   renderAll();
 }
 
-function doBuyCloth(clothId) {
+function doExpandCloth(dir) {
   if (!run || playing || run.phase !== PHASE.PREPARE) return;
-  const res = run.buyCloth(clothId);
+  const res = run.expandCloth(dir);
   if (!res.ok) { toast(res.reason); return; }
-  toast(`换上 ${run.header.clothName}，可用 ${res.area} 格`
-    + (res.dropped ? `（${res.dropped} 件放不下已折金）` : ''));
+  toast(`扩了一排，现在能放 ${res.total} 格`);
   renderAll();
 }
 

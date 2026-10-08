@@ -250,8 +250,10 @@ ok('背包列占六成左右（背包 : 商店）',
 ok('商店栏宽度够摆货（>= 380）',
   layoutInfo && layoutInfo.railW >= 380,
   `左 ${layoutInfo?.bagW} vs 右 ${layoutInfo?.railW}`);
-ok('储物箱在背包与商店之间',
-  layoutInfo && layoutInfo.boxW >= 160 && layoutInfo.boxRight <= layoutInfo.railLeft + 30,
+// 用户要求储物箱「改小而不是一长条」：窄栏 + 小方块，位置仍在背包与商店之间
+ok('储物箱是小方块且在背包与商店之间',
+  layoutInfo && layoutInfo.boxW >= 120 && layoutInfo.boxW <= 200
+    && layoutInfo.boxRight <= layoutInfo.railLeft + 30,
   JSON.stringify({ boxW: layoutInfo?.boxW, boxRight: layoutInfo?.boxRight, railLeft: layoutInfo?.railLeft }));
 // 格子锁死 64px 后，舞台高度 = 行数×64，不再随窗口拉伸，竖直居中会留少量边距
 ok('背包在竖直方向基本填满可用高度',
@@ -274,6 +276,7 @@ const topStats = await cdp.eval('document.querySelectorAll("#stats .stat").lengt
 ok('顶栏只留 5 项数值', topStats === 5, `${topStats}`);
 ok('出售区存在', await cdp.eval('!!document.getElementById("sell-zone")'));
 ok('引导条存在', await cdp.eval('!!document.getElementById("guide") && document.getElementById("guide").innerText.length > 4'));
+ok('事件栏已下线', await cdp.eval('!document.getElementById("log") && !document.querySelector(".log-panel")'));
 
 // 布局：背包在左，商店与出售区在最右同一栏
 const layout = await cdp.eval(`
