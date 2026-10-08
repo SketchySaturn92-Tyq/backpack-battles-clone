@@ -41,7 +41,8 @@ export class Run {
 
   buy(index) {
     const res = this.shop.buy(index, this.header.gold);
-    if (!res.ok) { this.note(`购买失败：${res.reason}`); return { ok: false, reason: res.reason }; }
+    // 买不起属于高频误触，只让 UI 弹提示，不刷日志
+    if (!res.ok) return { ok: false, reason: res.reason };
     this.header.gold -= res.cost;
     const item = { ...res.item, uid: nextUid() };
     const spot = this.board.findFreeSpot(item.shape);

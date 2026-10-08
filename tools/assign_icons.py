@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-把 art/packs/ 下生成好的精灵按顺序映射到道具 id，输出到 assets/icons/。
+按已人工核对的对照关系，把 art/packs/ 里的精灵复制成 assets/icons/<item_id>.png。
+
+核对方式：tools/contact_sheet.py 生成对照图 → 人眼逐格确认 → 写进下面的 SOURCES。
+每行是 (包名, 精灵序号, 道具 id)，精灵序号对应生成时 requirement 的从左到右顺序。
 
 用法：
-    python3 tools/assign_icons.py            # 扫描并复制
-    python3 tools/assign_icons.py --list     # 只看映射，不复制
-
-映射规则写在 ICON_MAP 里：包名 → [道具 id 顺序]，
-顺序与生成时的 requirement 描述顺序一致（同一批 sprite_00..07 按描述从左到右）。
-人工核对过就固定，不再依赖自动识别。
+    python3 tools/assign_icons.py --list    # 只打印，不复制
+    python3 tools/assign_icons.py           # 复制并写 art/icon_map.json
 """
 
 import argparse
@@ -17,83 +16,128 @@ import shutil
 import sys
 from pathlib import Path
 
+from PIL import Image
+
 ROOT = Path(__file__).resolve().parent.parent
 PACKS = ROOT / "art" / "packs"
 ICONS = ROOT / "assets" / "icons"
 
-# 生成顺序 → 道具 id；未映射到的会落到 _unmapped
-ICON_MAP = {
-    "weapon": ["dagger", "sword", "bow", "spear", "axe", "firestaff", "crossbow", "greatsword"],
-    "armor": ["buckler", "leather", "woodshield", "chainmail", "dragonmail"],
-    "food": ["bread", "apple", "mushroom", "feast", "elixir"],
-    "gem": ["ruby", "sapphire", "topaz", "emerald", "sagesStone"],
-    "trinket": ["charm", "belt", "hourglass", "whetstone", "poisonvial", "thornmail"],
-    "fused": ["twinDagger", "steelSword", "towerShield", "gemCrown"],
-}
+# (包名, 序号, 道具 id) —— 已按对照图逐格核对
+SOURCES = [
+    # 武器：铁匕首、短剑、木弓、长矛、战斧、火焰法杖、十字弩、巨剑
+    ("weapon", 0, "dagger"), ("weapon", 1, "sword"), ("weapon", 2, "bow"), ("weapon", 3, "spear"),
+    ("weapon", 4, "axe"), ("weapon", 5, "firestaff"), ("weapon", 6, "crossbow"), ("weapon", 7, "greatsword"),
+    # 防具：小圆盾、皮甲、木盾、锁子甲、龙鳞甲
+    ("armor", 0, "buckler"), ("armor", 1, "leather"), ("armor", 2, "woodshield"),
+    ("armor", 3, "chainmail"), ("armor", 4, "dragonmail"),
+    # 食物：面包、苹果、蘑菇、大餐、不死药
+    ("food", 0, "bread"), ("food", 1, "apple"), ("food", 2, "mushroom"),
+    ("food", 3, "feast"), ("food", 4, "elixir"),
+    # 宝石：红宝石(菱形红)、蓝宝石、黄玉(水滴)、祖母绿、贤者之石(黑色星芒)
+    ("gem", 4, "ruby"), ("gem", 1, "sapphire"), ("gem", 2, "topaz"),
+    ("gem", 3, "emerald"), ("gem", 7, "sagesStone"),
+    # 饰品：幸运符、腰带、沙漏、磨刀石、毒药瓶、荆棘披风
+    ("trinket", 0, "charm"), ("trinket", 1, "belt"), ("trinket", 2, "hourglass"),
+    ("trinket", 3, "whetstone"), ("trinket", 4, "poisonvial"), ("trinket", 5, "thornmail"),
+    # 合成专属：交叉双剑(双刃匕首)、蓝焰剑(精钢剑)、狮徽盾(塔盾)、王冠(宝石王冠)
+    ("fused", 0, "twinDagger"), ("fused2", 0, "steelSword"),
+    ("fused", 1, "towerShield"), ("crown", 0, "gemCrown"),
+]
+
+# 输出统一边长（像素风用整数倍缩放 + 固定画布，保证每张图对齐一致）
+CANVAS = 96
 
 
 def latest_pack_dir(key: str):
-    """一个包名下可能有多次运行，取最新那次。"""
     base = PACKS / key
     if not base.is_dir():
         return None
     subs = [d for d in base.iterdir() if d.is_dir()]
-    if not subs:
-        return None
-    return max(subs, key=lambda d: d.stat().st_mtime)
+    return max(subs, key=lambda d: d.stat().st_mtime) if subs else None
 
 
-def collect_sprites(pack_dir: Path):
-    """只取编号精灵，排除预览拼图。"""
-    sprites = sorted(p for p in pack_dir.glob("sprite_*.png") if p.stem != "sprite_pack_preview")
-    return sprites
+def sprite_path(key: str, index: int):
+    d = latest_pack_dir(key)
+    if not d:
+        return None, f"包 {key} 不存在"
+    p = d / f"sprite_{index:02d}.png"
+    if not p.exists():
+        return None, f"{key} 缺少 sprite_{index:02d}.png"
+    return p, None
+
+
+def normalize(src: Path, dst: Path):
+    """裁到内容边界 → 整数倍放大 → 居中贴到固定画布，保持像素锐利且尺寸统一。"""
+    im = Image.open(src).convert("RGBA")
+    bb = im.getbbox()
+    if bb:
+        im = im.crop(bb)
+    side = max(im.size)
+    scale = max(1, CANVAS // side)
+    scaled = im.resize((im.width * scale, im.height * scale), Image.NEAREST)
+    canvas = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
+    canvas.alpha_composite(scaled, ((CANVAS - scaled.width) // 2, (CANVAS - scaled.height) // 2))
+    canvas.save(dst)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--list", action="store_true", help="只打印映射结果")
+    ap.add_argument("--list", action="store_true")
     args = ap.parse_args()
 
     ICONS.mkdir(parents=True, exist_ok=True)
-    report = {"assigned": [], "missing_pack": [], "spare": []}
+    done, problems, spare = [], [], []
 
-    for key, ids in ICON_MAP.items():
-        pack_dir = latest_pack_dir(key)
-        if not pack_dir:
-            report["missing_pack"].append(key)
-            print(f"[缺] 包 {key} 还没生成")
+    used = {}
+    for key, idx, item_id in SOURCES:
+        used.setdefault(key, set()).add(idx)
+
+    for key, idx, item_id in SOURCES:
+        src, err = sprite_path(key, idx)
+        if err:
+            problems.append(f"{item_id}: {err}")
+            print(f"[缺] {item_id:12s} {err}")
             continue
-        sprites = collect_sprites(pack_dir)
-        if not sprites:
-            report["missing_pack"].append(key)
-            print(f"[缺] 包 {key} 下没有 sprite_*.png")
+        dst = ICONS / f"{item_id}.png"
+        if not args.list:
+            normalize(src, dst)
+        size = Image.open(src).size if not args.list else Image.open(src).size
+        done.append({"id": item_id, "from": str(src.relative_to(ROOT)), "size": size})
+        print(f"[映射] {item_id:12s} ← {key}#{idx}  {size}")
+
+    # 报告每个包里没用上的精灵，方便以后补道具
+    for key in {k for k, _, _ in SOURCES}:
+        d = latest_pack_dir(key)
+        if not d:
             continue
+        all_idx = sorted(
+            int(p.stem.split("_")[1]) for p in d.glob("sprite_*.png")
+            if p.stem != "sprite_pack_preview"
+        )
+        left = [i for i in all_ids(all_idx) if i not in used.get(key, set())]
+        for i in left:
+            spare.append(f"{key}#{i}")
 
-        for i, item_id in enumerate(ids):
-            if i >= len(sprites):
-                print(f"[缺图] {key} 只出了 {len(sprites)} 张，{item_id} 没图")
-                continue
-            src = sprites[i]
-            dst = ICONS / f"{item_id}.png"
-            report["assigned"].append({"id": item_id, "from": str(src.relative_to(ROOT))})
-            if not args.list:
-                shutil.copy2(src, dst)
-            print(f"[映射] {item_id:12s} ← {src.name}")
-
-        for extra in sprites[len(ids):]:
-            report["spare"].append(str(extra.relative_to(ROOT)))
-
-    if report["spare"]:
-        print(f"\n[多余] {len(report['spare'])} 张没被映射，可人工挑选替换")
+    if spare:
+        print(f"\n[备用] {len(spare)} 张未使用：{'、'.join(spare)}")
+        print("        （可留给后续版本的新道具，原始文件仍在 art/packs/ 下）")
 
     if not args.list:
         (ROOT / "art" / "icon_map.json").write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        print(f"\n已写入 {ICONS.relative_to(ROOT)}/ 共 {len(report['assigned'])} 张")
-        print(f"映射清单：art/icon_map.json")
+            json.dumps({"assigned": done, "missing": problems, "spare": spare},
+                       ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"\n已生成 {len(done)} 个图标 → assets/icons/")
 
-    return 0 if not report["missing_pack"] else 1
+    if problems:
+        print(f"\n有 {len(problems)} 项没配上：")
+        for p in problems:
+            print("  - " + p)
+        return 1
+    return 0
+
+
+def all_ids(idxs):
+    return idxs
 
 
 if __name__ == "__main__":
