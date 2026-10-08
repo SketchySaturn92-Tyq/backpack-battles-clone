@@ -8,6 +8,7 @@ art/packs/
 art/logs/
 art/verify/
 art/icon_map.json
+art/icons_before_fit/
 
 # 密钥与环境
 .env
