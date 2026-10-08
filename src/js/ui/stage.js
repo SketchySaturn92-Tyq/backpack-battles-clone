@@ -27,45 +27,70 @@ export class BattleStage {
     this.index = 0;
   }
 
-  /** 开场：画出两侧角色 */
+  /**
+   * 开场：按官方截图的分区来画。
+   *   上方：双方背包放大对峙（各自带布与道具），下方一行读条
+   *   下方：缩小立绘分列两侧，中间留给双方数值面板
+   */
   setup({ left, right }) {
+    const bars = (o) => `
+      <div class="bars">
+        <div class="bar hp"><i style="width:100%"></i><span>${o.hp}/${o.hp}</span></div>
+        <div class="bar armor"><i style="width:0%"></i><span>护甲 0</span></div>
+      </div>`;
+
     this.root.innerHTML = `
       <div class="stage">
-        <div class="fighter left" id="fighter-a">
-          <div class="nameplate"><span class="fname">${esc(left.name)}</span><span class="fclass">${esc(left.cls || '')}</span></div>
-          <div class="bars">
-            <div class="bar hp"><i style="width:100%"></i><span>${left.hp}/${left.hp}</span></div>
-            <div class="bar armor"><i style="width:0%"></i><span>护甲 0</span></div>
+        <div class="stage-top">
+          <div class="mini-side left">
+            <div class="ms-head">
+              <span class="fname">${esc(left.name)}</span>
+              <span class="fclass">${esc(left.cls || '')}</span>
+            </div>
+            <div class="mini-board">${left.boardHtml || '<p class="hint">没有背包</p>'}</div>
+            <div class="weaponline" id="weapons-a"></div>
           </div>
-          <div class="portrait" id="portrait-a">
-            ${left.art ? `<img src="${left.art}" alt="">` : '<div class="ph">?</div>'}
-            <div class="fxlayer" id="fx-a"></div>
+
+          <div class="stage-middle">
+            <div class="vs">VS</div>
+            <div class="timer" id="stage-timer">0.0s</div>
           </div>
-          <div class="weaponline" id="weapons-a"></div>
+
+          <div class="mini-side right">
+            <div class="ms-head">
+              <span class="fname">${esc(right.name)}</span>
+              <span class="fclass">${esc(right.cls || '')}</span>
+            </div>
+            <div class="mini-board">${right.boardHtml || '<p class="hint">没有背包</p>'}</div>
+            <div class="weaponline" id="weapons-b"></div>
+          </div>
         </div>
 
-        <div class="stage-middle">
-          <div class="vs">VS</div>
-          <div class="timer" id="stage-timer">0.0s</div>
-        </div>
+        <div class="stage-bottom">
+          <div class="fighter left" id="fighter-a">
+            <div class="portrait" id="portrait-a">
+              ${left.art ? `<img src="${left.art}" alt="">` : '<div class="ph">?</div>'}
+              <div class="fxlayer" id="fx-a"></div>
+            </div>
+            ${bars(left)}
+          </div>
 
-        <div class="fighter right" id="fighter-b">
-          <div class="nameplate"><span class="fname">${esc(right.name)}</span><span class="fclass">${esc(right.cls || '')}</span></div>
-          <div class="bars">
-            <div class="bar hp"><i style="width:100%"></i><span>${right.hp}/${right.hp}</span></div>
-            <div class="bar armor"><i style="width:0%"></i><span>护甲 0</span></div>
+          <div class="mid-cards" id="mid-cards">${midCard(left, "a")}${midCard(right, "b")}</div>
+
+          <div class="fighter right" id="fighter-b">
+            <div class="portrait flipped" id="portrait-b">
+              ${right.art ? `<img src="${right.art}" alt="">` : '<div class="ph">?</div>'}
+              <div class="fxlayer" id="fx-b"></div>
+            </div>
+            ${bars(right)}
           </div>
-          <div class="portrait flipped" id="portrait-b">
-            ${right.art ? `<img src="${right.art}" alt="">` : '<div class="ph">?</div>'}
-            <div class="fxlayer" id="fx-b"></div>
-          </div>
-          <div class="weaponline" id="weapons-b"></div>
         </div>
       </div>
       <div class="stage-log" id="stage-log"></div>
     `;
     this.elA = this.root.querySelector('#fighter-a');
     this.elB = this.root.querySelector('#fighter-b');
+    this.midCardsEl = this.root.querySelector('#mid-cards');
     this.logEl = this.root.querySelector('#stage-log');
     this.timerEl = this.root.querySelector('#stage-timer');
   }
@@ -323,6 +348,25 @@ export class BattleStage {
     this.skip();
     this.root.innerHTML = '';
   }
+}
+
+/**
+ * 下方中间的数值卡。
+ * 位置对齐官方截图：两张卡并排夹在双方立绘之间，左卡是你、右卡是对手。
+ */
+function midCard(o, side) {
+  const st = o.stats || {};
+  const row = (k, v) => `<div class="mc-row"><span>${k}</span><b>${v}</b></div>`;
+  const pct = (v, max) => `${Math.max(0, Math.min(100, (v / (max || 1)) * 100))}%`;
+  return `
+    <div class="mid-card ${side}">
+      <div class="mc-head">${esc(o.title || o.name)}</div>
+      <div class="mc-bar hp"><i style="width:${pct(o.hp, o.hp)}%"></i><span>${o.hp}/${o.hp}</span></div>
+      ${row('护甲', Math.round(st.armor || 0))}
+      ${row('每秒伤害', `${(st.dps || 0).toFixed(1)}`)}
+      ${row('暴击 / 反伤', `${Math.round((st.crit || 0) * 100)}% / ${Math.round(st.thorns || 0)}`)}
+      ${row('每秒回复', (st.regen || 0).toFixed(1))}
+    </div>`;
 }
 
 function who(side) { return side === 'A' ? '你' : '对手'; }

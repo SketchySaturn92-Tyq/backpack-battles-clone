@@ -602,6 +602,20 @@ const battleProbe = await cdp.eval(`
     const transitions = bars.map(b => b.style.transition);
     await sleep(700);
     const widths2 = bars.map(b => b.style.width);
+    // 新战斗页分区：上方双方背包缩略图，下方缩小立绘夹着中间数值卡
+    const top = document.querySelector('.stage-top');
+    const bottom = document.querySelector('.stage-bottom');
+    const miniBoards = [...document.querySelectorAll('.mini-board .mb-wrap')];
+    const mbCells = [...document.querySelectorAll('.mini-board .mb-cell')];
+    const onCloth = [...document.querySelectorAll('.mini-board .mb-cell.on-cloth')];
+    const mbItems = [...document.querySelectorAll('.mini-board .mb-item')];
+    const portraits = [...document.querySelectorAll('.stage-bottom .portrait')];
+    const midCards = [...document.querySelectorAll('#mid-cards .mid-card')];
+    const pRect = portraits[0]?.getBoundingClientRect();
+    const topRect = top?.getBoundingClientRect();
+    const bottomRect = bottom?.getBoundingClientRect();
+    const mbRect = miniBoards[0]?.getBoundingClientRect();
+
     return {
       onBattle,
       hasWeapon: bought,
@@ -609,6 +623,18 @@ const battleProbe = await cdp.eval(`
       barCount: bars.length,
       widths1, widths2, transitions,
       hasWeaponNames: document.querySelectorAll('.wbar .wb-name').length,
+      // 布局
+      miniBoards: miniBoards.length,
+      miniCellCount: mbCells.length,
+      miniOnCloth: onCloth.length,
+      miniItems: mbItems.length,
+      miniW: Math.round(mbRect?.width || 0),
+      miniH: Math.round(mbRect?.height || 0),
+      midCards: midCards.length,
+      portraitW: Math.round(pRect?.width || 0),
+      portraitH: Math.round(pRect?.height || 0),
+      topAboveBottom: !!(topRect && bottomRect && topRect.bottom <= bottomRect.top + 6),
+      miniBoardWiderThanPortrait: (mbRect?.width || 0) > (pRect?.width || 0) * 1.8,
     };
   })()
 `, true, 90000);
@@ -622,6 +648,19 @@ ok('读条在走（宽度会变化或已走满）',
 ok('读条带过渡时长（按格数算的秒数）',
   battleProbe.transitions.some((t) => /width [\d.]+s/.test(t || '')),
   JSON.stringify(battleProbe.transitions).slice(0, 120));
+
+// 战斗页分区：照官方截图，上方放大双方背包，下方缩小立绘 + 中间数值卡
+ok('战斗页上下分区（背包在上、立绘在下）', battleProbe.topAboveBottom, JSON.stringify(battleProbe).slice(0, 120));
+ok('双方各有一块背包缩略图', battleProbe.miniBoards === 2, `${battleProbe.miniBoards} 块`);
+ok('缩略图按格子画出来了', battleProbe.miniCellCount >= 60, `${battleProbe.miniCellCount} 格`);
+ok('缩略图上有布（透明舞台衬托）', battleProbe.miniOnCloth >= 20, `布上 ${battleProbe.miniOnCloth} 格`);
+ok('对手背包也画了道具', battleProbe.miniItems >= 2, `${battleProbe.miniItems} 件`);
+ok('背包比立绘大得多（立绘缩小）',
+  battleProbe.miniBoardWiderThanPortrait && battleProbe.portraitW <= 120,
+  `背包宽 ${battleProbe.miniW} / 立绘宽 ${battleProbe.portraitW}`);
+ok('中间有双方数值卡', battleProbe.midCards === 2, `${battleProbe.midCards} 张`);
+
+await cdp.shot('04-战斗页布局.png');
 
 // 跳过要能收口到结算弹窗
 const skipResult = await cdp.eval(`

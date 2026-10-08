@@ -10,7 +10,7 @@
 import { cells, size } from '../data/shapes.js';
 import { CATEGORIES, RARITY, chargeSeconds } from '../data/items.js';
 import { BOARD, SHOP_QUALITY } from '../data/constants.js';
-import { CELL as CLOTH_CELL, shopCloths, clothArea, clothSize } from '../data/cloths.js';
+import { CELL as CLOTH_CELL, shopCloths, clothArea, clothSize, resolvedShape } from '../data/cloths.js';
 import { itemEffectiveStats, dpsOf, armoredDps } from '../core/analyze.js';
 import { upgradeOf, chainOf } from '../data/recipes.js';
 
@@ -541,4 +541,61 @@ export function renderStorage(root, run, { onTake } = {}) {
     if (onTake) d.addEventListener('click', () => onTake(it.uid));
     root.appendChild(d);
   }
+}
+
+
+// ============ 战斗页：双方背包缩略图 ============
+
+/** 战斗页背包缩略图的单格边长 */
+export const MINI_CELL = 34;
+const MINI_GAP = 2;
+
+/**
+ * 把一方的背包画成缩略图：布 + 上面摆的道具。
+ * 战斗页上方左右各一块，让玩家一眼看清双方带的是什么。
+ *
+ * board = { cols, rows, cloth, items: [{id,name,cat,x,y,shape}] }
+ */
+export function renderMiniBoard(board, { stageCols = 9, stageRows = 7 } = {}) {
+  if (!board) return '';
+  const { cols, rows, cloth, items = [] } = board;
+  const cell = MINI_CELL, gap = MINI_GAP, step = cell + gap;
+  // 双方都按同样的舞台尺寸出图：小背包居中，左右看起来才对称
+  const w = stageCols * step - gap;
+  const h = stageRows * step - gap;
+  const offX = Math.floor((stageCols - cols) / 2) * step;
+  const offY = Math.floor((stageRows - rows) / 2) * step;
+
+  // 布覆盖的格子（带上四边描边，画出来才像一块布）
+  const onCloth = new Set();
+  if (cloth) {
+    const shape = resolvedShape(cloth.cloth.shape, cloth);
+    for (const c of cells(shape)) onCloth.add(`${cloth.x + c.x},${cloth.y + c.y}`);
+  }
+
+  let grid = '';
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const key = `${x},${y}`;
+      const on = onCloth.has(key);
+      const edge = !on ? '' : [
+        onCloth.has(`${x},${y - 1}`) ? '' : 'edge-t',
+        onCloth.has(`${x},${y + 1}`) ? '' : 'edge-b',
+        onCloth.has(`${x - 1},${y}`) ? '' : 'edge-l',
+        onCloth.has(`${x + 1},${y}`) ? '' : 'edge-r',
+      ].join(' ');
+      grid += `<i class="mb-cell${on ? ` on-cloth ${edge}` : ''}"`
+        + ` style="left:${offX + x * step}px;top:${offY + y * step}px;width:${cell}px;height:${cell}px"></i>`;
+    }
+  }
+
+  let placed = '';
+  for (const it of items) {
+    const sz = size(it.shape);
+    placed += `<span class="mb-item cat-${it.cat}" title="${it.name}"`
+      + ` style="left:${offX + it.x * step}px;top:${offY + it.y * step}px;width:${sz.w * step - gap}px;height:${sz.h * step - gap}px">`
+      + `<img src="${iconFor(it)}" alt="" onerror="this.style.display='none'"></span>`;
+  }
+
+  return `<div class="mb-wrap" style="width:${w}px;height:${h}px">${grid}${placed}</div>`;
 }

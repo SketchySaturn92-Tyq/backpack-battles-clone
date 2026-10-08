@@ -18,6 +18,7 @@ import { Run, PHASE } from '../src/js/core/run.js';
 import { ITEMS, ITEM_BY_ID, RECIPE_MAP, poolByTier, CATEGORIES } from '../src/js/data/items.js';
 import { CLASSES, CLASS_BY_ID } from '../src/js/data/classes.js';
 import { ECON, MATCH } from '../src/js/data/constants.js';
+import { STAGE, STARTER_CLOTH, clothArea } from '../src/js/data/cloths.js';
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -243,10 +244,11 @@ section('职业与分支');
   ok('职业数量 6', CLASSES.length === 6, `实际 ${CLASSES.length}`);
   ok('每个职业 2 个分支', CLASSES.every((c) => c.branches.length === 2));
   ok('每个职业有被动', CLASSES.every((c) => c.passive?.name && c.passive?.effect));
-  ok('每个职业有背包尺寸', CLASSES.every((c) => c.bag?.cols >= 5 && c.bag?.rows >= 7));
+  // 容量现在由布决定，职业之间不再有背包尺寸差异
   ok('每个职业的初始道具存在', CLASSES.every((c) => c.startItems.every((id) => ITEM_BY_ID[id])));
-  ok('起始道具能塞进自己的背包', CLASSES.every((c) => {
-    const b = new Board(c.bag.cols, c.bag.rows);
+  ok('起始道具能摆进开局布', CLASSES.every((c) => {
+    const b = new Board(STAGE.cols, STAGE.rows);
+    b.setCloth(STARTER_CLOTH);
     for (const id of c.startItems) {
       const it = { ...ITEM_BY_ID[id], uid: `t-${id}-${Math.random()}` };
       const spot = b.findFreeSpot(it.shape);
@@ -269,12 +271,13 @@ section('职业与分支');
   ok('战士血比盗贼多', warrior.header.hp > rogue.header.hp, `${warrior.header.hp} vs ${rogue.header.hp}`);
   ok('商人起始金币最多', CLASS_BY_ID.merchant.gold > CLASS_BY_ID.ranger.gold);
 
-  // 背包尺寸对所有角色统一：差异只在携带道具与被动
-  ok('所有职业背包尺寸一致（7×9）',
-    new Set(CLASSES.map((c) => `${c.bag.cols}x${c.bag.rows}`)).size === 1,
-    [...new Set(CLASSES.map((c) => `${c.bag.cols}x${c.bag.rows}`))].join(' '));
-  ok('所有职业的背包都是 7×9',
-    CLASSES.every((c) => c.bag.cols === 7 && c.bag.rows === 9));
+  // 所有角色共用同一个 9×7 舞台与同一块开局布：差异只在携带道具与被动
+  ok('职业数据里不再写死背包尺寸',
+    CLASSES.every((c) => c.bag === undefined));
+  ok('所有职业共用 9×7 舞台',
+    STAGE.cols === 9 && STAGE.rows === 7, `${STAGE.cols}×${STAGE.rows}`);
+  ok('开局布 20 格且所有职业一样',
+    clothArea(STARTER_CLOTH.shape) === 20, `${clothArea(STARTER_CLOTH.shape)} 格`);
   ok('角色之间的差异在携带道具', new Set(CLASSES.map((c) => c.startItems.join('+'))).size >= 4,
     CLASSES.map((c) => c.startItems.join('+')).join(' | '));
 

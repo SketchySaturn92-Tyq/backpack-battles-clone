@@ -681,7 +681,7 @@ button.sm { padding: 3px 9px; font-size: 11px; border-radius: 5px; min-height: 2
 
 .battle-body {
   flex: 1; min-height: 0;
-  display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 10px;
+  display: flex; flex-direction: column; gap: 8px;
 }
 .battle-stage-wrap { display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; }
 
@@ -690,8 +690,8 @@ button.sm { padding: 3px 9px; font-size: 11px; border-radius: 5px; min-height: 2
 .stage {
   position: relative;
   flex: 1;
-  display: grid; grid-template-columns: 1fr 62px 1fr;
-  gap: 6px; align-items: center;
+  display: flex; flex-direction: column;
+  gap: 8px;
   padding: 10px;
   background:
     repeating-linear-gradient(90deg, rgba(0,0,0,.10) 0 3px, transparent 3px 30px),
@@ -733,6 +733,91 @@ button.sm { padding: 3px 9px; font-size: 11px; border-radius: 5px; min-height: 2
 .fighter .portrait .ph { font-size: 32px; color: #9c8a6a; }
 .fighter .portrait.flipped img, .fighter .portrait.flipped .ph { transform: scaleX(-1); }
 .fighter .weaponline { display: flex; flex-direction: column; gap: 4px; width: 100%; max-width: 190px; }
+.mini-side .weaponline { width: 100%; max-width: 300px; margin-top: 2px; }
+
+
+/* ---------- 战斗页分区（对位官方截图） ---------- */
+
+/* 上段：双方背包放大对峙 */
+.stage-top {
+  flex: 1 1 auto; min-height: 0;
+  display: grid; grid-template-columns: minmax(0, 1fr) 64px minmax(0, 1fr);
+  gap: 8px; align-items: start;
+}
+.mini-side { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
+.mini-side .ms-head { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.mini-side .fname { font-size: 13px; font-weight: 800; color: #f4e2bc; text-shadow: 0 1px 3px #000; }
+.mini-side .fclass { font-size: 10px; color: #7fd4d4; }
+.mini-board {
+  display: flex; align-items: center; justify-content: center;
+  padding: 7px;
+  background: rgba(20,12,6,.45);
+  border: 2px solid var(--wood-darkest); border-radius: 8px;
+  box-shadow: inset 0 3px 12px rgba(0,0,0,.55);
+  max-width: 100%; overflow: hidden;
+}
+.mini-side.right .mini-board { transform: scaleX(-1); }
+
+/* 缩略背包：布 + 道具 */
+.mb-wrap { position: relative; }
+.mb-cell {
+  position: absolute; display: block; border-radius: 2px;
+  /* 没铺到的格子也要看得见：给一层极淡的底板 */
+  background: rgba(240,222,180,.07);
+  box-shadow: inset 0 0 0 1px rgba(240,222,180,.10);
+}
+.mb-cell.on-cloth {
+  background: linear-gradient(160deg, #d9c08a, #bfa064);
+  box-shadow: inset 0 0 0 1px rgba(120,86,44,.35);
+}
+.mb-cell.on-cloth.edge-t { box-shadow: inset 0 0 0 1px rgba(120,86,44,.35), inset 0 2px 0 var(--cloth-edge); }
+.mb-cell.on-cloth.edge-b { box-shadow: inset 0 0 0 1px rgba(120,86,44,.35), inset 0 -2px 0 var(--cloth-edge); }
+.mb-cell.on-cloth.edge-l { box-shadow: inset 0 0 0 1px rgba(120,86,44,.35), inset 2px 0 0 var(--cloth-edge); }
+.mb-cell.on-cloth.edge-r { box-shadow: inset 0 0 0 1px rgba(120,86,44,.35), inset -2px 0 0 var(--cloth-edge); }
+.mb-item {
+  position: absolute; display: flex; align-items: center; justify-content: center;
+  border-radius: 4px; overflow: hidden;
+}
+.mb-item img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+
+/* 下段：缩小立绘 + 中间双方数值卡，位置对齐官方截图 */
+.stage-bottom {
+  flex: 0 0 auto;
+  display: grid; grid-template-columns: 150px minmax(0, 1fr) 150px;
+  gap: 8px; align-items: end;
+}
+.stage-bottom .fighter { gap: 4px; }
+.stage-bottom .portrait { width: 108px; height: 108px; }
+.stage-bottom .portrait img { width: 96px; height: 96px; }
+.stage-bottom .bars { max-width: 150px; }
+.mid-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: end; }
+.mid-card {
+  padding: 6px 8px 5px;
+  background: linear-gradient(180deg, rgba(60,36,18,.92), rgba(34,20,10,.95));
+  border: 2px solid var(--wood-darkest); border-radius: 7px;
+  box-shadow: inset 0 2px 8px rgba(0,0,0,.6);
+}
+.mid-card .mc-head {
+  font-size: 11.5px; font-weight: 800; color: var(--gold-bright);
+  text-align: center; margin-bottom: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mid-card.b .mc-head { color: #ffbfae; }
+.mid-card .mc-bar {
+  position: relative; height: 15px; border-radius: 7px; margin-bottom: 3px;
+  background: linear-gradient(180deg, #1c1108, #2e1c10);
+  border: 1px solid var(--wood-darkest); overflow: hidden;
+}
+.mid-card .mc-bar i { display: block; height: 100%; background: linear-gradient(180deg, var(--hp-light), var(--hp)); transition: width .22s ease; }
+.mid-card .mc-bar span {
+  position: absolute; inset: 0; text-align: center; line-height: 15px;
+  font-size: 9.5px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px #000;
+}
+.mid-card .mc-row { display: flex; justify-content: space-between; font-size: 9.5px; color: #e8d6ae; line-height: 1.5; }
+.mid-card .mc-row b { color: #fff6dd; }
+
+/* 战斗日志压到底部，别抢背包的位置 */
+.stage-log { max-height: 76px; }
 
 /* 每件武器一条读条：读满才挥一次 */
 .fighter .wbar { display: flex; flex-direction: column; gap: 2px; }
@@ -1065,8 +1150,13 @@ button.sm { padding: 3px 9px; font-size: 11px; border-radius: 5px; min-height: 2
   .d-strip .d-dim { display: none; }
 
   /* 战斗页：上下排 */
-  .battle-body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
-  .fighter-cards { flex-direction: row; overflow-x: auto; }
+  .battle-body { gap: 6px; }
+  /* 窄屏：背包对峙保留，立绘与数值卡竖着排 */
+  .stage-top { grid-template-columns: minmax(0, 1fr) 40px minmax(0, 1fr); }
+  .stage-bottom { grid-template-columns: 88px minmax(0, 1fr) 88px; }
+  .stage-bottom .portrait { width: 72px; height: 72px; }
+  .stage-bottom .portrait img { width: 64px; height: 64px; }
+  .mid-cards { grid-template-columns: 1fr; }
   .fc { min-width: 152px; flex: 0 0 auto; font-size: 11px; }
   .battle-top { gap: 7px; }
   .bt-mid { order: -1; flex-basis: 100%; }

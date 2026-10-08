@@ -19,10 +19,11 @@ import { ITEM_BY_ID, chargeSeconds } from './data/items.js';
 import { buildOverview, nextStep } from './core/analyze.js';
 import { shopHints, progressFor } from './data/recipes.js';
 import { BattleStage } from './ui/stage.js';
+import { STAGE, STARTER_CLOTH, clothArea } from './data/cloths.js';
 import {
   renderBoard, renderShop, renderDetail, renderStats, renderCapacity, renderGuide,
   renderOverview, renderShopQuality, renderShopHints, upgradePopupHtml,
-  renderClothBar, renderClothShop, renderStorage, iconFor,
+  renderClothBar, renderClothShop, renderStorage, iconFor, renderMiniBoard,
   renderFighterCard, moveChip, resetChip, setChipDragging, setHover, setSellActive,
   cellToPx, setCellSize, getLayout, getCellSize,
 } from './ui/render.js';
@@ -138,7 +139,8 @@ function renderClassPage() {
   el.pickStats.innerHTML = [
     ['生命', cls.hp],
     ['起始金币', cls.gold],
-    ['背包', `${cls.bag.cols}×${cls.bag.rows}`],
+    ['背包舞台', `${STAGE.cols}×${STAGE.rows}`],
+    ['开局布', `${STARTER_CLOTH.name} · ${clothArea(STARTER_CLOTH.shape)} 格`],
     ['被动', cls.passive.name],
   ].map(([k, v]) => `<div class="sr"><span>${k}</span><b>${v}</b></div>`).join('')
     + `<div class="sr"><span>效果</span><b style="font-size:10.5px">${cls.passive.desc}</b></div>`;
@@ -711,37 +713,40 @@ function runBattle() {
   el.battleLog.innerHTML = '';
   el.stageRoot.innerHTML = '';
 
-  // 底部双方数值卡
-  renderFighterCard('a', {
-    name: '你',
-    build: (run.header.branchName || run.header.className),
-    hp: result.hpA, maxHp: result.maxHpA ?? result.hpA,
-    armor: result.myStats?.armor ?? 0,
-    dps: result.myStats?.dps ?? 0,
-    crit: result.myStats?.crit ?? 0,
-    thorns: result.myStats?.thorns ?? 0,
-    regen: result.myStats?.regen ?? 0,
-  });
-  renderFighterCard('b', {
-    name: result.oppName,
-    build: result.foeBuild.map((i) => i.name).slice(0, 2).join(' + '),
-    hp: result.hpB, maxHp: result.maxHpB ?? result.hpB,
-    armor: result.foeStats?.armor ?? 0,
-    dps: result.foeStats?.dps ?? 0,
-    crit: result.foeStats?.crit ?? 0,
-    thorns: result.foeStats?.thorns ?? 0,
-    regen: result.foeStats?.regen ?? 0,
-  });
-
   stage = new BattleStage(el.stageRoot, {
     speed,
     onEvent: (ev) => appendBattleLog(ev),
     onFinish: () => { playing = false; showResult(result); },
   });
 
+  // 按官方截图的分区：上方放大双方背包，下方缩小立绘夹着数值卡
   stage.setup({
-    left: { name: '你', cls: run.header.branchName || run.header.className, hp: result.hpA, art: heroArtFor(run) },
-    right: { name: result.oppName, cls: '', hp: result.hpB, art: `assets/chars/char-${result.round % 6}.png` },
+    left: {
+      name: '你',
+      title: run.header.branchName || run.header.className,
+      cls: run.header.branchName || run.header.className,
+      hp: result.hpA,
+      art: heroArtFor(run),
+      boardHtml: renderMiniBoard({
+        cols: result.myCols, rows: result.myRows,
+        cloth: result.myCloth,
+        items: result.myBuild,
+      }),
+      stats: result.myStats,
+    },
+    right: {
+      name: result.oppName,
+      title: result.oppName,
+      cls: '',
+      hp: result.hpB,
+      art: `assets/chars/char-${result.round % 6}.png`,
+      boardHtml: renderMiniBoard({
+        cols: result.foeCols, rows: result.foeRows,
+        cloth: null,
+        items: result.foeBuild,
+      }),
+      stats: result.foeStats,
+    },
   });
   stage.play(result.events, {
     weaponsA: run.board.list()

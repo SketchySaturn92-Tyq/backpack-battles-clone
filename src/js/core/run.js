@@ -73,7 +73,7 @@ export class Run {
     }
 
     this.note(`选择职业：${cls.name}（${cls.passive.name}）`);
-    this.note(`背包 ${cls.bag.cols}×${cls.bag.rows}，先买几件道具试着塞进去。`);
+    this.note(`背包舞台 ${STAGE.cols}×${STAGE.rows}，开局铺的是${STARTER_CLOTH.name}（${clothArea(STARTER_CLOTH.shape)} 格），先买几件道具试着摆进去。`);
   }
 
   get bonus() { return this.branch?.bonus || {}; }
@@ -418,6 +418,10 @@ export class Run {
       logLines: result.events.map((e) => ({ t: e.t, text: eventText(e, { A: '你', B: opp.name }), type: e.type })),
       myBuild: this.board.list().map((e) => ({ id: e.item.id, name: e.item.name, cat: e.item.cat, tier: e.item.tier, x: e.x, y: e.y, shape: e.shape })),
       foeBuild: opp.board.list().map((e) => ({ id: e.item.id, name: e.item.name, cat: e.item.cat, tier: e.item.tier, x: e.x, y: e.y, shape: e.shape })),
+      // 战斗页要把双方背包画出来，所以把尺寸也带上
+      myCols: this.board.cols, myRows: this.board.rows,
+      foeCols: opp.board.cols, foeRows: opp.board.rows,
+      myCloth: this.board.cloth ? { ...this.board.cloth } : null,
       orderMine: mine.order,
       orderFoe: foe.order,
       stats: result.stats,
