@@ -268,9 +268,15 @@ section('职业与分支');
   const rogue = mk('rogue');
   ok('战士血比盗贼多', warrior.header.hp > rogue.header.hp, `${warrior.header.hp} vs ${rogue.header.hp}`);
   ok('商人起始金币最多', CLASS_BY_ID.merchant.gold > CLASS_BY_ID.ranger.gold);
-  ok('不同职业背包尺寸不同',
-    new Set(CLASSES.map((c) => `${c.bag.cols}x${c.bag.rows}`)).size >= 3,
+
+  // 背包尺寸对所有角色统一：差异只在携带道具与被动
+  ok('所有职业背包尺寸一致（6×8）',
+    new Set(CLASSES.map((c) => `${c.bag.cols}x${c.bag.rows}`)).size === 1,
     [...new Set(CLASSES.map((c) => `${c.bag.cols}x${c.bag.rows}`))].join(' '));
+  ok('所有职业的背包都是 6×8',
+    CLASSES.every((c) => c.bag.cols === 6 && c.bag.rows === 8));
+  ok('角色之间的差异在携带道具', new Set(CLASSES.map((c) => c.startItems.join('+'))).size >= 4,
+    CLASSES.map((c) => c.startItems.join('+')).join(' | '));
 
   // 被动生效
   const warriorUnit = buildUnit(warrior.board, { name: 'W', hp: 70, classDef: CLASS_BY_ID.warrior, seed: 1 });

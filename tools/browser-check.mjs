@@ -138,18 +138,98 @@ function ok(name, cond, extra = '') {
 await cdp.send('Page.navigate', { url: PAGE_URL });
 await sleep(2000);
 
-// ============ 1. 页面精简 ============
-console.log('\n— 页面精简');
+// ============ 1. 选角色页（最上一级） ============
+console.log('\n— 选角色页');
 ok('标题正确', String(await cdp.eval('document.title')).includes('背包乱斗'));
-ok('职业弹窗出现', await cdp.eval('!document.getElementById("overlay").classList.contains("hidden")'));
-await cdp.eval('document.querySelector(".class-card[data-class=\\"warrior\\"]").click()');
-await sleep(500);
+ok('开局停在选角色页', await cdp.eval('!document.getElementById("page-class").classList.contains("hidden")'));
+ok('整理页此时是隐藏的', await cdp.eval('document.getElementById("page-shop").classList.contains("hidden")'));
 
-const panels = await cdp.eval('document.querySelectorAll(".panel").length');
-ok('面板数量收敛到 5 个以内', panels <= 5, `${panels} 个`);
+const pickCards = await cdp.eval('document.querySelectorAll("#pick-list .pick-card").length');
+ok('列出 6 个角色', pickCards === 6, `${pickCards} 个`);
+const pickCount = await cdp.eval('document.querySelectorAll(".pick-card").length');
+ok('默认选中一个角色', pickCount >= 1 && await cdp.eval('document.querySelectorAll(".pick-card.on").length') === 1);
+
+const pickInfo = await cdp.eval(`
+  (() => ({
+    name: document.getElementById('pick-name').textContent,
+    hasArt: !!document.querySelector('#pick-art')?.src,
+    stats: document.getElementById('pick-stats').innerText,
+    items: document.querySelectorAll('#pick-items .pick-item').length,
+    branches: document.querySelectorAll('#pick-branches .pick-branch').length,
+  }))()
+`);
+ok('左侧显示角色名', pickInfo.name.length > 0, pickInfo.name);
+ok('左侧显示角色立绘', pickInfo.hasArt);
+ok('左侧显示属性表', pickInfo.stats.includes('生命'), pickInfo.stats.slice(0, 40));
+ok('右侧显示初始携带', pickInfo.items >= 1, `${pickInfo.items} 件`);
+ok('右侧显示可走分支', pickInfo.branches === 2, `${pickInfo.branches} 个`);
+await cdp.shot('00-选角色页.png');
+
+// 换选一个角色，左侧要跟着变
+const switchOk = await cdp.eval(`
+  (async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const before = document.getElementById('pick-name').textContent;
+    const target = [...document.querySelectorAll('.pick-card')].find(c => c.dataset.class === 'warrior');
+    target.click();
+    await sleep(250);
+    return {
+      before,
+      after: document.getElementById('pick-name').textContent,
+      onCount: document.querySelectorAll('.pick-card.on').length,
+    };
+  })()
+`, true);
+ok('点角色卡能切换选中', switchOk.before !== switchOk.after, JSON.stringify(switchOk));
+ok('切换后仍只有一个选中', switchOk.onCount === 1, `${switchOk.onCount}`);
+
+// 开局进入整理页
+await cdp.eval('document.getElementById("btn-pick-start").click()');
+await sleep(600);
+ok('点开局进入整理页', await cdp.eval('!document.getElementById("page-shop").classList.contains("hidden")'));
+ok('整理页打开后选角色页隐藏', await cdp.eval('document.getElementById("page-class").classList.contains("hidden")'));
+
+// ============ 2. 布局与背包尺寸 ============
+console.log('\n— 布局与背包');
+const layoutInfo = await cdp.eval(`
+  (() => {
+    const bag = document.querySelector('.col-bag');
+    const rail = document.querySelector('.col-rail');
+    const board = document.getElementById('board');
+    const wrap = document.getElementById('board-wrap');
+    if (!bag || !rail || !board) return null;
+    const b = bag.getBoundingClientRect(), r = rail.getBoundingClientRect(), bd = board.getBoundingClientRect();
+    // 格子尺寸从 board 的实际列宽读，而不是 CSS 变量（那只是兜底默认值）
+    const cols = (board.style.gridTemplateColumns || '').match(/([\\d.]+)px/);
+    return {
+      bagW: Math.round(b.width), railW: Math.round(r.width),
+      boardW: Math.round(bd.width), boardH: Math.round(bd.height),
+      wrapH: Math.round(wrap.getBoundingClientRect().height),
+      cell: cols ? Number(cols[1]) : 0,
+    };
+  })()
+`);
+ok('左栏没有虚胖（不超过背包太多）',
+  layoutInfo && layoutInfo.bagW - layoutInfo.boardW < 40,
+  JSON.stringify(layoutInfo));
+ok('商店栏比左栏宽（空间给了商店）',
+  layoutInfo && layoutInfo.railW > layoutInfo.bagW,
+  `左 ${layoutInfo?.bagW} vs 右 ${layoutInfo?.railW}`);
+ok('背包在竖直方向基本填满可用高度',
+  layoutInfo && layoutInfo.boardH >= layoutInfo.wrapH * 0.9,
+  `背包高 ${layoutInfo?.boardH} / 可用 ${layoutInfo?.wrapH}`);
+ok('格子尺寸明显放大（>= 60px）',
+  layoutInfo && layoutInfo.cell >= 60,
+  `格子 ${layoutInfo?.cell}px`);
+
+// 只数当前可见页面里的面板（选角色页/战斗页的面板此时是隐藏的）
+const panels = await cdp.eval(`
+  [...document.querySelectorAll('.panel')].filter(p => p.offsetParent !== null).length
+`);
+ok('当前页面面板数量收敛到 5 个以内', panels <= 5, `${panels} 个`);
 
 const domNodes = await cdp.eval('document.querySelectorAll("*").length');
-ok('DOM 节点总数受控（< 700）', domNodes < 700, `${domNodes} 个`);
+ok('DOM 节点总数受控（< 800）', domNodes < 800, `${domNodes} 个`);
 
 const topStats = await cdp.eval('document.querySelectorAll("#stats .stat").length');
 ok('顶栏只留 5 项数值', topStats === 5, `${topStats}`);

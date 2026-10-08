@@ -151,16 +151,90 @@ html, body {
 .panel-head .cap { margin-left: auto; font-size: 11px; color: #f0dcae; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .panel-head .hint { font-size: 10px; color: #d8c396; }
 
-/* ================= 一级页面布局 ================= */
+/* ================= 选角色页面（最上一级） ================= */
+.class-layout {
+  flex: 1; min-height: 0;
+  display: grid;
+  grid-template-columns: 268px minmax(0, 1fr) 236px;
+  gap: 10px;
+}
+@media (max-width: 1100px) {
+  .class-layout { grid-template-columns: 240px minmax(0, 1fr); }
+  .pick-side { grid-column: 1 / -1; }
+}
+
+.pick-hero { align-items: center; text-align: center; }
+.pick-art {
+  width: 148px; height: 148px; image-rendering: pixelated;
+  filter: drop-shadow(0 6px 14px rgba(0,0,0,.45));
+  margin: 4px auto 6px;
+}
+.pick-name { font-size: 18px; font-weight: 800; color: #4a2f12; letter-spacing: 1px; }
+.pick-desc { font-size: 11.5px; color: var(--ink-soft); line-height: 1.6; margin: 5px 0 9px; }
+.pick-hero .stat-rows { grid-template-columns: 1fr; width: 100%; text-align: left; }
+
+.pick-list-panel { min-height: 0; }
+.pick-list {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+  gap: 8px; align-content: start; padding-right: 2px;
+}
+.pick-card {
+  text-align: left; cursor: pointer;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 9px 10px;
+  background: linear-gradient(180deg, #f5e8c6, var(--parch-2));
+  border: 2px solid var(--wood); border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--gold-deep), 0 3px 8px rgba(0,0,0,.26);
+  transition: transform .08s, filter .12s, box-shadow .12s;
+  color: var(--ink); font: inherit; min-height: 0;
+}
+.pick-card:hover { transform: translateY(-2px); filter: brightness(1.05); }
+.pick-card.on {
+  border-color: var(--gold-bright);
+  box-shadow: 0 0 0 2px var(--gold-bright), 0 0 14px rgba(240,200,105,.45);
+  background: linear-gradient(180deg, #fbeecb, #ecdcae);
+}
+.pick-card .pc-top { display: flex; align-items: center; gap: 8px; }
+.pick-card .pc-art { width: 40px; height: 40px; image-rendering: pixelated; flex: 0 0 auto; }
+.pick-card .pc-name { font-size: 14px; font-weight: 800; color: #6b4416; }
+.pick-card .pc-passive { font-size: 10.5px; color: var(--ink-soft); line-height: 1.45; }
+.pick-card .pc-passive b { color: #1f6b6b; }
+.pick-card .pc-meta { font-size: 10px; color: #7a6440; }
+
+.pick-side { min-height: 0; }
+.pick-items { display: flex; flex-wrap: wrap; gap: 7px; }
+.pick-item {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 6px 8px; border-radius: 7px; min-width: 62px;
+  background: rgba(255,250,235,.66);
+  border: 1px solid rgba(150,120,70,.45);
+}
+.pick-item img { width: 30px; height: 30px; image-rendering: pixelated; }
+.pick-item span { font-size: 10px; color: #4a2f12; text-align: center; line-height: 1.2; }
+.pick-branches { display: flex; flex-direction: column; gap: 6px; }
+.pick-branch {
+  padding: 6px 9px; border-radius: 7px; font-size: 11px; line-height: 1.5;
+  background: rgba(180,140,220,.16);
+  border-left: 3px solid var(--purple);
+}
+.pick-branch b { color: var(--purple); }
+
+/* ================= 二级页面布局 ================= */
 .stage-layout {
   flex: 1; min-height: 0;
   display: grid;
-  /* 左栏给背包、右栏给商店；商店略宽，6 件能摆成 3×2 不用内滚 */
-  grid-template-columns: minmax(0, 1fr) 392px;
+  /* 左栏按背包实际需要收缩（不再吃掉整片剩余宽度），省下的全给商店 */
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
   gap: 9px;
 }
 
-.col-bag { display: flex; flex-direction: column; gap: 9px; min-height: 0; min-width: 0; }
+.col-bag {
+  display: flex; flex-direction: column; gap: 9px;
+  min-height: 0; min-width: 0;
+  /* 上限压在背包能用到的宽度，避免左栏虚胖 */
+  max-width: 434px;
+}
 .col-rail { display: flex; flex-direction: column; gap: 9px; min-height: 0; min-width: 0; }
 
 .bag-panel { flex: 1; min-height: 0; }

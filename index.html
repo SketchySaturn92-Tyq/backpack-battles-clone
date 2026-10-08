@@ -24,8 +24,44 @@
   <!-- 引导条 -->
   <div id="guide" class="guide"></div>
 
-  <!-- ==================== 一级页面：一屏完成买 + 整理 ==================== -->
-  <div id="page-shop" class="page">
+  <!-- ==================== 一级页面：选角色 ==================== -->
+  <div id="page-class" class="page hidden">
+    <div class="class-layout">
+
+      <!-- 左：选中角色的立绘与属性 -->
+      <section class="panel pick-hero">
+        <div class="panel-head"><h2>角色</h2></div>
+        <img id="pick-art" class="pick-art" src="assets/chars/char-1.png" alt="">
+        <div id="pick-name" class="pick-name">游侠</div>
+        <div id="pick-desc" class="pick-desc"></div>
+        <div id="pick-stats" class="stat-rows"></div>
+      </section>
+
+      <!-- 中：角色列表 -->
+      <section class="panel pick-list-panel">
+        <div class="panel-head">
+          <h2>选择角色</h2>
+          <span class="hint">背包尺寸相同，差别在携带的道具与被动</span>
+        </div>
+        <div id="pick-list" class="pick-list"></div>
+        <div class="actions">
+          <button class="primary" id="btn-pick-start">用这个角色开局</button>
+        </div>
+      </section>
+
+      <!-- 右：初始携带与分支 -->
+      <section class="panel pick-side">
+        <div class="panel-head"><h2>初始携带</h2></div>
+        <div id="pick-items" class="pick-items"></div>
+        <div class="panel-head" style="margin-top:10px"><h2>可走分支</h2></div>
+        <div id="pick-branches" class="pick-branches"></div>
+      </section>
+
+    </div>
+  </div>
+
+  <!-- ==================== 二级页面：一屏完成买 + 整理 ==================== -->
+  <div id="page-shop" class="page hidden">
 
     <div class="stage-layout">
 

@@ -13,7 +13,7 @@
  */
 
 import { Run, PHASE } from './core/run.js';
-import { CLASSES } from './data/classes.js';
+import { CLASSES, CLASS_BY_ID } from './data/classes.js';
 import { ECON, MATCH } from './data/constants.js';
 import { ITEM_BY_ID, chargeSeconds } from './data/items.js';
 import { buildOverview, nextStep } from './core/analyze.js';
@@ -36,17 +36,29 @@ let drag = null;
 
 const el = {};
 
-boot();
+// 注意：启动调用放在文件末尾。
+// 模块顶层的 const/let 有暂时性死区，若在这里就调用 boot()，
+// 后面声明的 HERO_ART、pickedClassId 会直接抛 ReferenceError。
 
 function boot() {
   cacheEls();
   bindStaticEvents();
-  renderClassPicker();
+  showClassPage();
 }
 
 function cacheEls() {
+  el.pageClass = document.getElementById('page-class');
   el.pageShop = document.getElementById('page-shop');
   el.pageBattle = document.getElementById('page-battle');
+  el.boardWrap = document.getElementById('board-wrap');
+  el.pickArt = document.getElementById('pick-art');
+  el.pickName = document.getElementById('pick-name');
+  el.pickDesc = document.getElementById('pick-desc');
+  el.pickStats = document.getElementById('pick-stats');
+  el.pickList = document.getElementById('pick-list');
+  el.pickItems = document.getElementById('pick-items');
+  el.pickBranches = document.getElementById('pick-branches');
+  el.btnPickStart = document.getElementById('btn-pick-start');
   el.stats = document.getElementById('stats');
   el.guide = document.getElementById('guide');
   el.board = document.getElementById('board');
@@ -81,39 +93,74 @@ function cacheEls() {
 
 // ============ 页面切换 ============
 
+/** 三个页面：选角色 → 整理/购买 → 战斗 */
 function showPage(which) {
-  const battle = which === 'battle';
-  el.pageShop.classList.toggle('hidden', battle);
-  el.pageBattle.classList.toggle('hidden', !battle);
+  el.pageClass.classList.toggle('hidden', which !== 'class');
+  el.pageShop.classList.toggle('hidden', which !== 'shop');
+  el.pageBattle.classList.toggle('hidden', which !== 'battle');
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// ============ 职业选择 ============
+// ============ 选角色页面（最上一级） ============
 
-function renderClassPicker() {
-  el.overlayBody.innerHTML = `
-    <h2>选择职业</h2>
-    <p class="lead">职业决定背包大小与被动。第 ${MATCH.branchRound} 回合可以再选一个分支。</p>
-    <div class="class-grid">
-      ${CLASSES.map((c) => `
-        <button class="class-card" data-class="${c.id}">
-          <div class="cc-head">
-            <span class="cc-name">${c.name}</span>
-            <span class="cc-bag">${c.bag.cols}×${c.bag.rows}</span>
-          </div>
-          <p class="cc-desc">${c.desc}</p>
-          <div class="cc-passive"><b>${c.passive.name}</b>${c.passive.desc}</div>
-          <div class="cc-meta">生命 ${c.hp} · 金币 ${c.gold}</div>
-          <div class="cc-branches">${c.branches.map((b) => b.name).join(' / ')}</div>
-        </button>`).join('')}
-    </div>`;
-  el.overlay.classList.remove('hidden');
-  el.overlayBody.querySelectorAll('.class-card').forEach((b) => {
+/** 角色立绘索引：六个职业各一张 */
+const HERO_ART = { ranger: 1, warrior: 0, mage: 2, rogue: 5, merchant: 6, druid: 7 };
+function heroArtIndex(classId) { return HERO_ART[classId] ?? 0; }
+
+let pickedClassId = 'ranger';
+
+function showClassPage() {
+  pickedClassId = 'ranger';
+  renderClassPage();
+  showPage('class');
+}
+
+function renderClassPage() {
+  const cls = CLASS_BY_ID[pickedClassId] || CLASSES[0];
+
+  // 左：立绘 + 属性
+  el.pickArt.src = `assets/chars/char-${heroArtIndex(cls.id)}.png`;
+  el.pickName.textContent = cls.name;
+  el.pickDesc.textContent = cls.desc;
+  el.pickStats.innerHTML = [
+    ['生命', cls.hp],
+    ['起始金币', cls.gold],
+    ['背包', `${cls.bag.cols}×${cls.bag.rows}`],
+    ['被动', cls.passive.name],
+  ].map(([k, v]) => `<div class="sr"><span>${k}</span><b>${v}</b></div>`).join('')
+    + `<div class="sr"><span>效果</span><b style="font-size:10.5px">${cls.passive.desc}</b></div>`;
+
+  // 中：角色卡（背包尺寸统一，所以卡片上不再列尺寸）
+  el.pickList.innerHTML = CLASSES.map((c) => `
+    <button class="pick-card ${c.id === pickedClassId ? 'on' : ''}" data-class="${c.id}">
+      <div class="pc-top">
+        <img class="pc-art" src="assets/chars/char-${heroArtIndex(c.id)}.png" alt="">
+        <div>
+          <div class="pc-name">${c.name}</div>
+          <div class="pc-meta">生命 ${c.hp} · 金币 ${c.gold}</div>
+        </div>
+      </div>
+      <div class="pc-passive"><b>${c.passive.name}</b> ${c.passive.desc}</div>
+    </button>`).join('');
+  el.pickList.querySelectorAll('.pick-card').forEach((b) => {
     b.addEventListener('click', () => {
-      el.overlay.classList.add('hidden');
-      startRun(b.dataset.class);
+      pickedClassId = b.dataset.class;
+      renderClassPage();
     });
   });
+
+  // 右：初始携带与分支
+  el.pickItems.innerHTML = cls.startItems.map((id) => {
+    const it = ITEM_BY_ID[id];
+    if (!it) return '';
+    return `<div class="pick-item">
+      <img src="assets/icons/${it.id}.png" alt="" onerror="this.style.visibility='hidden'">
+      <span>${it.name}</span>
+    </div>`;
+  }).join('') || '<p class="hint">空手开局</p>';
+
+  el.pickBranches.innerHTML = cls.branches.map((b) => `
+    <div class="pick-branch"><b>${b.name}</b>　${b.desc}</div>`).join('');
 }
 
 function startRun(classId, seed = Math.floor(Math.random() * 1e9)) {
@@ -125,8 +172,7 @@ function startRun(classId, seed = Math.floor(Math.random() * 1e9)) {
   if (stage) { stage.destroy(); stage = null; }
   el.battleLog.innerHTML = '';
   el.stageRoot.innerHTML = '<p class="hint center">点「开始战斗」后这里会播放双方角色与攻击动效。</p>';
-  el.pageBattle.classList.add('hidden');
-  el.pageShop.classList.remove('hidden');
+  showPage('shop');
   renderAll();
   // 让背包先占满可用高度，再按结果定格子尺寸
   requestAnimationFrame(() => { fitBoard(); fitBoard(); });
@@ -206,22 +252,27 @@ function openUpgradePopup(uid) {
 }
 
 /**
- * 按可用空间给背包定格子尺寸，让背包尽量大又不溢出屏幕。
- * 这是「一屏展示」的关键：格子大小跟着视口走，而不是写死。
+ * 按可用空间给背包定格子尺寸。
+ * 关键是两个约束一起算：
+ *   - 高度：左栏剩下的高度（这是真正的瓶颈）
+ *   - 宽度：左栏允许的最大宽度（防止格子撑爆左栏）
+ * 取两者较小值，背包就能填满面板而不是缩在中间一小块。
  */
+const MAX_BAG_W = 450;
+
 function fitBoard() {
   if (!run || !el.boardWrap) return;
   const box = el.boardWrap;
   const cols = run.board.cols;
   const rows = run.board.rows;
-  // 只留很少的余量：格子要尽量大，边框不该吃掉空间
-  const availW = box.clientWidth - 10;
-  const availH = box.clientHeight - 10;
-  if (availW <= 0 || availH <= 0) return;
   const layout = getLayout();
-  const byW = (availW - cols * layout.GAP) / cols;
-  const byH = (availH - rows * layout.GAP) / rows;
-  const cell = Math.min(byW, byH);
+
+  const availH = box.clientHeight - 4;
+  if (availH <= 0) return;
+
+  const cellByH = (availH - rows * layout.GAP) / rows;
+  const cellByW = (MAX_BAG_W - layout.PAD * 2 - cols * layout.GAP) / cols;
+  const cell = Math.min(cellByH, cellByW);
   if (setCellSize(cell)) renderAll();
 }
 
@@ -440,8 +491,9 @@ function bindStaticEvents() {
   el.skipBtn.addEventListener('click', () => { stage?.skip(); });
 
   el.btnRecipes.addEventListener('click', showRecipes);
-  el.btnReset.addEventListener('click', renderClassPicker);
+  el.btnReset.addEventListener('click', showClassPage);
   el.btnHelp.addEventListener('click', showHelp);
+  el.btnPickStart.addEventListener('click', () => startRun(pickedClassId));
 
   // 视口变化时重新给背包定尺寸（含手机横竖屏切换）
   let resizeTimer = 0;
@@ -617,7 +669,7 @@ function showGameOver(reason) {
   el.overlay.classList.remove('hidden');
   document.getElementById('ov-again').addEventListener('click', () => {
     el.overlay.classList.add('hidden');
-    renderClassPicker();
+    showClassPage();
   });
 }
 
@@ -659,6 +711,8 @@ function showHelp() {
 }
 
 function heroArtFor(run) {
-  const map = { ranger: 1, warrior: 0, mage: 2, rogue: 5, merchant: 6, druid: 7 };
-  return `assets/chars/char-${map[run.classDef.id] ?? 0}.png`;
+  return `assets/chars/char-${heroArtIndex(run.classDef.id)}.png`;
 }
+
+// 全部声明就绪后再启动，避免顶层 const/let 的暂时性死区
+boot();

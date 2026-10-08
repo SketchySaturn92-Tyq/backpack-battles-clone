@@ -1,11 +1,11 @@
 /**
  * 职业与子职业分支。
  *
- * 每个职业给：初始背包尺寸、初始道具、初始血量、被动特性。
- * 子职业在指定回合开放，选一个之后获得该分支的专属加成与专属道具。
+ * 每个职业给：初始道具、初始血量、被动特性。
  *
- * 设计意图：职业决定「你往哪个方向堆形状」，
- * 子职业决定「同样的堆法里你靠什么赢」。
+ * 背包尺寸对所有角色统一（6×8），角色之间只差「携带的武器与道具」和被动：
+ * 同样的格子里，用什么开局决定你往哪个方向堆形状。
+ * 子职业在指定回合开放，选一个之后获得该分支的专属加成与专属道具。
  */
 
 export const CLASSES = [
@@ -69,7 +69,7 @@ export const CLASSES = [
     id: 'mage',
     name: '法师',
     desc: '法术伤害高但脆，靠位置保护核心道具。',
-    bag: { cols: 5, rows: 8 },
+    bag: { cols: 6, rows: 8 },
     hp: 55,
     gold: 12,
     startItems: ['firestaff', 'potion'],
@@ -97,7 +97,7 @@ export const CLASSES = [
     id: 'rogue',
     name: '盗贼',
     desc: '双持匕首与毒药，攻速极快但单次伤害低。',
-    bag: { cols: 6, rows: 7 },
+    bag: { cols: 6, rows: 8 },
     hp: 55,
     gold: 11,
     startItems: ['dagger', 'buckler'],
@@ -125,7 +125,7 @@ export const CLASSES = [
     id: 'merchant',
     name: '商人',
     desc: '起始金币多、背包大，靠滚雪球攒出更强组合。',
-    bag: { cols: 7, rows: 8 },
+    bag: { cols: 6, rows: 8 },
     hp: 60,
     gold: 18,
     startItems: ['dagger', 'charm'],
