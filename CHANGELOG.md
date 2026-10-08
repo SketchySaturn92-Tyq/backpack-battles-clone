@@ -41,6 +41,11 @@
 - 10 胜吃鸡，或撑满 16 回合结算
 - 结算面板给出总评分
 
+**美术**
+- 全部 33 件道具都有 64px 像素图标，透明底，统一居中到 96px 画布
+- 图标用 Meowa 像素生成，分 6 个资源包出图，人工核对对照图后精确映射
+- 附生成脚本 tools/gen_art.sh、映射脚本 tools/assign_icons.py、对照图工具 tools/contact_sheet.py
+
 **工程**
 - 纯前端零依赖，HTML + 原生 ES Module，双击即玩
 - 分层严格：data 不 import 任何东西，core 不碰 DOM，ui 只读状态
