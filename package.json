@@ -1,0 +1,12 @@
+{
+  "name": "backpack-battles-clone",
+  "version": "0.1.0",
+  "private": true,
+  "description": "背包乱斗（Backpack Battles）复刻版：浏览器可运行的背包管理 PvP 自走棋最小闭环",
+  "type": "module",
+  "scripts": {
+    "test": "node tools/test-core.mjs",
+    "serve": "python3 -m http.server 8848"
+  },
+  "license": "MIT"
+}

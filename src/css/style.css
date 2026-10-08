@@ -1,0 +1,211 @@
+/* 背包乱斗·复刻版  样式
+   深色木纹 + 琥珀金，贴近原作的道具箱气质 */
+
+:root {
+  --bg: #14161d;
+  --bg-soft: #1b1f28;
+  --panel: #222733;
+  --panel-2: #2a3040;
+  --line: #39415a;
+  --text: #e7ecf5;
+  --text-dim: #94a0b8;
+  --gold: #e8b33c;
+  --red: #e2604a;
+  --blue: #4fa3e3;
+  --purple: #b06fe0;
+  --green: #5fbf6a;
+  --cell: 54px;
+  --gap: 2px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  background: radial-gradient(1200px 600px at 50% -10%, #232a3a 0%, var(--bg) 60%);
+  color: var(--text);
+  font: 14px/1.5 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+#app { max-width: 1240px; margin: 0 auto; padding: 18px 20px 40px; }
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 16px; margin-bottom: 14px;
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--line); border-radius: 12px;
+}
+.topbar h1 { margin: 0; font-size: 17px; letter-spacing: .5px; }
+.topbar .sub { color: var(--text-dim); font-size: 12px; }
+.spacer { flex: 1; }
+
+.stat {
+  display: flex; flex-direction: column; align-items: center;
+  min-width: 66px; padding: 4px 10px;
+  background: #171b24; border: 1px solid var(--line); border-radius: 9px;
+}
+.stat b { font-size: 17px; color: var(--gold); line-height: 1.2; }
+.stat span { font-size: 11px; color: var(--text-dim); }
+.stat.hp b { color: var(--red); }
+.stat.gold b { color: var(--gold); }
+.stat.win b { color: var(--green); }
+
+/* ---------- 布局 ---------- */
+.layout { display: grid; grid-template-columns: 400px 1fr 320px; gap: 14px; align-items: start; }
+@media (max-width: 1120px) { .layout { grid-template-columns: 1fr; } }
+
+.card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; padding: 12px;
+}
+.card h2 {
+  margin: 0 0 10px; font-size: 13px; color: var(--text-dim);
+  font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+}
+
+/* ---------- 背包网格 ---------- */
+.board-wrap { display: flex; justify-content: center; }
+#board {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(6, var(--cell));
+  grid-template-rows: repeat(7, var(--cell));
+  gap: var(--gap);
+  padding: 6px;
+  background: #10131a;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.cellbg {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.012));
+  border-radius: 5px;
+}
+.cellbg.hover-ok { background: rgba(95,191,106,.28); box-shadow: inset 0 0 0 1px rgba(95,191,106,.7); }
+.cellbg.hover-bad { background: rgba(226,96,74,.30); box-shadow: inset 0 0 0 1px rgba(226,96,74,.8); }
+
+/* 道具块 */
+.chip {
+  position: absolute;
+  border-radius: 7px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: linear-gradient(160deg, #39425a, #262c3b);
+  cursor: grab;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 2px;
+  padding: 3px;
+  overflow: hidden;
+  transition: transform .06s ease, box-shadow .12s ease;
+  user-select: none;
+}
+.chip:hover { box-shadow: 0 0 0 2px rgba(232,179,60,.55), 0 6px 16px rgba(0,0,0,.45); z-index: 5; }
+.chip.dragging { opacity: .35; cursor: grabbing; }
+.chip.cat-weapon { background: linear-gradient(160deg, #5b3029, #2c1d1c); }
+.chip.cat-armor  { background: linear-gradient(160deg, #2c3d5e, #1b2233); }
+.chip.cat-food   { background: linear-gradient(160deg, #2f4c31, #1b2620); }
+.chip.cat-gem    { background: linear-gradient(160deg, #4a2d59, #241a2c); }
+.chip.cat-trinket{ background: linear-gradient(160deg, #5c4622, #2b2317); }
+.chip .ico { width: 26px; height: 26px; image-rendering: pixelated; flex: 0 0 auto; }
+.chip .nm {
+  font-size: 9.5px; line-height: 1.05; text-align: center;
+  color: #f2f5fb; text-shadow: 0 1px 2px #000; padding: 0 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
+.chip .tier {
+  position: absolute; top: 2px; right: 3px;
+  font-size: 8.5px; color: var(--gold); font-weight: 700;
+}
+.chip.small .nm { display: none; }
+.chip.small .ico { width: 20px; height: 20px; }
+.chip.synergy { box-shadow: 0 0 0 2px rgba(79,163,227,.6); }
+
+/* ---------- 商店 ---------- */
+.shop-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.shop-card {
+  position: relative;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 8px 6px; text-align: center; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  transition: transform .08s ease, border-color .12s;
+}
+.shop-card:hover { transform: translateY(-2px); border-color: var(--gold); }
+.shop-card.sold { opacity: .32; cursor: default; transform: none; }
+.shop-card.locked { border-color: var(--gold); box-shadow: inset 0 0 0 1px rgba(232,179,60,.5); }
+.shop-card .ico { width: 34px; height: 34px; image-rendering: pixelated; }
+.shop-card .nm { font-size: 11px; }
+.shop-card .pr { font-size: 12px; color: var(--gold); font-weight: 700; }
+.shop-card .lock {
+  position: absolute; top: 3px; left: 4px; font-size: 11px; color: var(--text-dim);
+}
+.shop-card .lock.on { color: var(--gold); }
+.shop-card .tier { position: absolute; top: 3px; right: 5px; font-size: 9px; color: var(--text-dim); }
+
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+button {
+  font: inherit; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 9px; padding: 8px 14px; cursor: pointer;
+  transition: background .12s, border-color .12s, transform .06s;
+}
+button:hover:not(:disabled) { background: #333b4e; border-color: var(--gold); }
+button:active:not(:disabled) { transform: translateY(1px); }
+button:disabled { opacity: .42; cursor: not-allowed; }
+button.primary {
+  background: linear-gradient(180deg, #d8a52e, #b8862a);
+  color: #201a08; font-weight: 700; border-color: #e8c366;
+}
+button.primary:hover:not(:disabled) { background: linear-gradient(180deg, #e8b33c, #c8932f); }
+button.danger { border-color: #7a3a32; color: #ffb3a4; }
+button.ghost { background: transparent; }
+button.sm { padding: 4px 9px; font-size: 12px; border-radius: 7px; }
+
+/* ---------- 战斗日志 ---------- */
+.log {
+  height: 300px; overflow-y: auto;
+  background: #10131a; border: 1px solid var(--line); border-radius: 9px;
+  padding: 8px 10px; font-size: 12px; line-height: 1.75;
+}
+.log div { color: var(--text-dim); }
+.log .t-attack { color: #ffd08a; }
+.log .t-crit { color: #ff7a5c; font-weight: 700; }
+.log .t-heal { color: #8ee89a; }
+.log .t-burn { color: #ff9d5c; }
+.log .t-start { color: #bcd0f0; font-weight: 600; }
+.log .t-end { color: var(--gold); font-weight: 700; }
+.log .t-note { color: #b9a06a; font-style: italic; }
+.log .time { color: #5c6580; margin-right: 6px; }
+
+/* ---------- 详情 ---------- */
+.detail { min-height: 96px; font-size: 12.5px; color: var(--text-dim); }
+.detail h3 { margin: 0 0 4px; font-size: 14px; color: var(--text); }
+.detail .kv { display: flex; justify-content: space-between; padding: 1px 0; }
+.detail .kv b { color: var(--gold); font-weight: 600; }
+
+/* ---------- 遮罩 / 结算 ---------- */
+.overlay {
+  position: fixed; inset: 0; background: rgba(8,10,14,.82);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+  backdrop-filter: blur(3px);
+}
+.overlay .modal {
+  width: min(560px, 92vw); max-height: 84vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 14px; padding: 20px;
+}
+.overlay h2 { margin: 0 0 10px; font-size: 20px; }
+.hidden { display: none !important; }
+
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 28px;
+  background: #2a3040; border: 1px solid var(--gold); color: var(--text);
+  padding: 9px 18px; border-radius: 999px; font-size: 13px; z-index: 80;
+  opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(-6px); }
+
+.tips { font-size: 11.5px; color: var(--text-dim); line-height: 1.7; }
+.tips b { color: var(--gold); }
