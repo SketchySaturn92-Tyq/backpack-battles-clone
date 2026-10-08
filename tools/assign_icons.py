@@ -79,17 +79,20 @@ def sprite_path(key: str, index: int):
 
 
 def normalize(src: Path, dst: Path):
-    """裁到内容边界 → 整数倍放大 → 居中贴到固定画布，保持像素锐利且尺寸统一。"""
+    """裁到内容边界后整数倍放大，保持原始宽高比。
+
+    刻意不补成正方形画布：物品图要直接铺进形状框，
+    如果四周有透明留白，contain 时会整体缩一圈，看起来又是「小图配大方块」。
+    保持内容比例，长条形的武器才能在 1×3 的框里真正撑满。
+    """
     im = Image.open(src).convert("RGBA")
     bb = im.getbbox()
     if bb:
         im = im.crop(bb)
-    side = max(im.size)
-    scale = max(1, CANVAS // side)
-    scaled = im.resize((im.width * scale, im.height * scale), Image.NEAREST)
-    canvas = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
-    canvas.alpha_composite(scaled, ((CANVAS - scaled.width) // 2, (CANVAS - scaled.height) // 2))
-    canvas.save(dst)
+    longest = max(im.size)
+    scale = max(1, CANVAS // longest)
+    out = im.resize((im.width * scale, im.height * scale), Image.NEAREST)
+    out.save(dst)
 
 
 def main():

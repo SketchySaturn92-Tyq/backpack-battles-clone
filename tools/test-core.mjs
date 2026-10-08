@@ -270,11 +270,11 @@ section('职业与分支');
   ok('商人起始金币最多', CLASS_BY_ID.merchant.gold > CLASS_BY_ID.ranger.gold);
 
   // 背包尺寸对所有角色统一：差异只在携带道具与被动
-  ok('所有职业背包尺寸一致（6×8）',
+  ok('所有职业背包尺寸一致（7×9）',
     new Set(CLASSES.map((c) => `${c.bag.cols}x${c.bag.rows}`)).size === 1,
     [...new Set(CLASSES.map((c) => `${c.bag.cols}x${c.bag.rows}`))].join(' '));
-  ok('所有职业的背包都是 6×8',
-    CLASSES.every((c) => c.bag.cols === 6 && c.bag.rows === 8));
+  ok('所有职业的背包都是 7×9',
+    CLASSES.every((c) => c.bag.cols === 7 && c.bag.rows === 9));
   ok('角色之间的差异在携带道具', new Set(CLASSES.map((c) => c.startItems.join('+'))).size >= 4,
     CLASSES.map((c) => c.startItems.join('+')).join(' | '));
 
@@ -471,6 +471,41 @@ section('战斗与事件流');
   const farUnit = buildUnit(far, { name: 'far', hp: 60, seed: 1 });
   ok('不相邻的宝石不生效', farUnit.weapons[0].damage === soloUnit.weapons[0].damage,
     `${farUnit.weapons[0].damage} vs ${soloUnit.weapons[0].damage}`);
+}
+
+// ============ 8b. 背包扩容 ============
+section('背包扩容');
+{
+  const r = new Run({ seed: 21, classId: 'warrior' });
+  const c0 = r.board.cols, r0 = r.board.rows;
+  ok('初始背包 7×9', c0 === 7 && r0 === 9, `${c0}×${r0}`);
+  ok('开局就能扩容', r.canExpand());
+
+  const cost0 = r.expandCost();
+  r.header.gold = cost0 - 1;
+  ok('金币不够时拒绝扩容', r.expandBag().ok === false);
+
+  r.header.gold = 200;
+  const before = r.board.list().map((e) => `${e.item.uid}@${e.x},${e.y}`).sort().join('|');
+  const res = r.expandBag();
+  ok('花钱能扩容', res.ok === true, JSON.stringify(res));
+  ok('扩容后列 +1', r.board.cols === c0 + 1, `${r.board.cols}`);
+  ok('扩容按价格扣钱', r.header.gold === 200 - cost0, `${r.header.gold}`);
+  const after = r.board.list().map((e) => `${e.item.uid}@${e.x},${e.y}`).sort().join('|');
+  ok('扩容不移动已有道具', before === after, `${before} → ${after}`);
+  ok('扩容会涨价', r.expandCost() > cost0, `${cost0} → ${r.expandCost()}`);
+
+  let guard = 0;
+  while (r.canExpand() && guard++ < 30) { r.header.gold = 999; r.expandBag(); }
+  ok('能一路扩到上限', !r.canExpand(), `${r.board.cols}×${r.board.rows}`);
+  ok('上限是 9×11', r.board.cols === 9 && r.board.rows === 11, `${r.board.cols}×${r.board.rows}`);
+  ok('到上限后拒绝扩容', r.expandBag().ok === false);
+  ok('扩到上限后道具都还在', r.board.list().length >= 2, `${r.board.list().length} 件`);
+  ok('扩容后仍能放新道具', (() => {
+    const it = { ...ITEM_BY_ID.dagger, uid: 'after-expand' };
+    const spot = r.board.findFreeSpot(it.shape);
+    return !!spot && r.board.place(it, spot.x, spot.y, it.shape);
+  })());
 }
 
 // ============ 9. 对手池 ============

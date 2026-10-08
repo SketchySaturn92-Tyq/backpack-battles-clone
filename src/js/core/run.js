@@ -46,6 +46,7 @@ export class Run {
       losses: 0,
       streak: 0,
       fuses: 0,
+      expands: 0,
     };
 
     this.board = new Board(cls.bag.cols, cls.bag.rows);
@@ -118,6 +119,31 @@ export class Run {
     this.shop.refresh(true);
     if (cost > 0) this.note(`刷新商店（-${cost} 金）`);
     return { ok: true };
+  }
+
+  // ---------- 背包扩容 ----------
+
+  /** 扩容上限：列最多 9，行最多 11 */
+  canExpand() {
+    return this.board.cols < 9 || this.board.rows < 11;
+  }
+
+  /** 扩容花费：越往后越贵 */
+  expandCost() {
+    return 14 + (this.header.expands || 0) * 6;
+  }
+
+  /** 买一次扩容：先加列，列到顶再加行 */
+  expandBag() {
+    if (!this.canExpand()) return { ok: false, reason: '背包已经扩到最大' };
+    const cost = this.expandCost();
+    if (this.header.gold < cost) return { ok: false, reason: `需要 ${cost} 金` };
+    this.header.gold -= cost;
+    this.header.expands = (this.header.expands || 0) + 1;
+    if (this.board.cols < 9) this.board.expand(this.board.cols + 1, this.board.rows);
+    else this.board.expand(this.board.cols, this.board.rows + 1);
+    this.note(`背包扩容到 ${this.board.cols}×${this.board.rows}（-${cost} 金）`);
+    return { ok: true, cols: this.board.cols, rows: this.board.rows, cost };
   }
 
   /** 商店品质由回合自动决定，玩家不再需要手动升级 */

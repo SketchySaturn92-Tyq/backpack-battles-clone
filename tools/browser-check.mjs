@@ -218,8 +218,8 @@ ok('商店栏比左栏宽（空间给了商店）',
 ok('背包在竖直方向基本填满可用高度',
   layoutInfo && layoutInfo.boardH >= layoutInfo.wrapH * 0.9,
   `背包高 ${layoutInfo?.boardH} / 可用 ${layoutInfo?.wrapH}`);
-ok('格子尺寸明显放大（>= 60px）',
-  layoutInfo && layoutInfo.cell >= 60,
+ok('格子尺寸仍然够大（>= 56px）',
+  layoutInfo && layoutInfo.cell >= 56,
   `格子 ${layoutInfo?.cell}px`);
 
 // 只数当前可见页面里的面板（选角色页/战斗页的面板此时是隐藏的）

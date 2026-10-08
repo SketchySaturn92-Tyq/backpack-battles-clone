@@ -103,6 +103,23 @@ export class Board {
     this._order = null;
   }
 
+  /**
+   * 扩容：把网格改成更大的尺寸，原有道具保持原坐标。
+   * 只变大不移动坐标，所以已摆好的布局不会被打乱。
+   */
+  expand(cols, rows) {
+    if (cols === this.cols && rows === this.rows) return false;
+    if (cols < this.cols || rows < this.rows) return false;   // 只允许变大
+    const kept = this.list().map((e) => ({ item: e.item, x: e.x, y: e.y, shape: [...e.shape] }));
+    this.cols = cols;
+    this.rows = rows;
+    this.cells = new Array(cols * rows).fill(null);
+    this.items.clear();
+    this._order = null;
+    for (const e of kept) this.place(e.item, e.x, e.y, e.shape);
+    return true;
+  }
+
   /** 就地旋转；原地放不下就就近找位置。返回是否成功 */
   rotateAt(uid, dir = 1) {
     const e = this.items.get(uid);

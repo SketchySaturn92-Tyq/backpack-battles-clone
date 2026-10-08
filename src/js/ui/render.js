@@ -74,6 +74,8 @@ export function renderBoard(root, board, opts = {}) {
     el.style.width = `${entry.w ?? size(entry.shape).w * STEP - GAP}px`;
     el.style.height = `${entry.h ?? size(entry.shape).h * STEP - GAP}px`;
 
+    // 占格轮廓：只留极淡的边界，用于对齐参考；
+    // 视觉主体是下面那张物品图，不再是「小图标 + 大方块」。
     for (const c of cells(entry.shape)) {
       const cell = document.createElement('span');
       cell.className = 'sc';
@@ -99,8 +101,8 @@ export function renderBoard(root, board, opts = {}) {
     const inner = document.createElement('div');
     inner.className = 'inner';
     inner.innerHTML = `
-      <img class="ico" src="${iconFor(entry.item)}" alt="" onerror="this.style.display='none'">
-      <span class="nm" style="color:${tierColor(entry.item.tier)}">${entry.item.name}</span>`;
+      <img class="art" src="${iconFor(entry.item)}" alt="" onerror="this.style.display='none'">
+      <span class="nm">${entry.item.name}</span>`;
     el.appendChild(inner);
 
     el.addEventListener('pointerdown', (ev) => onGrab?.(ev, entry));

@@ -3,7 +3,7 @@
  *
  * 每个职业给：初始道具、初始血量、被动特性。
  *
- * 背包尺寸对所有角色统一（6×8），角色之间只差「携带的武器与道具」和被动：
+ * 背包尺寸对所有角色统一（7×9，可用扩容卡加大），角色之间只差「携带的武器与道具」和被动：
  * 同样的格子里，用什么开局决定你往哪个方向堆形状。
  * 子职业在指定回合开放，选一个之后获得该分支的专属加成与专属道具。
  */
@@ -13,7 +13,7 @@ export const CLASSES = [
     id: 'ranger',
     name: '游侠',
     desc: '弓箭与轻甲，靠连续攻击叠节奏。',
-    bag: { cols: 6, rows: 8 },
+    bag: { cols: 7, rows: 9 },
     hp: 60,
     gold: 10,
     startItems: ['sword', 'apple'],
@@ -41,7 +41,7 @@ export const CLASSES = [
     id: 'warrior',
     name: '战士',
     desc: '重甲与巨剑，用护甲换生存，用暴击换爆发。',
-    bag: { cols: 6, rows: 8 },
+    bag: { cols: 7, rows: 9 },
     hp: 70,
     gold: 10,
     startItems: ['sword', 'buckler'],
@@ -69,7 +69,7 @@ export const CLASSES = [
     id: 'mage',
     name: '法师',
     desc: '法术伤害高但脆，靠位置保护核心道具。',
-    bag: { cols: 6, rows: 8 },
+    bag: { cols: 7, rows: 9 },
     hp: 55,
     gold: 12,
     startItems: ['firestaff', 'potion'],
@@ -97,7 +97,7 @@ export const CLASSES = [
     id: 'rogue',
     name: '盗贼',
     desc: '双持匕首与毒药，攻速极快但单次伤害低。',
-    bag: { cols: 6, rows: 8 },
+    bag: { cols: 7, rows: 9 },
     hp: 55,
     gold: 11,
     startItems: ['dagger', 'buckler'],
@@ -125,7 +125,7 @@ export const CLASSES = [
     id: 'merchant',
     name: '商人',
     desc: '起始金币多、背包大，靠滚雪球攒出更强组合。',
-    bag: { cols: 6, rows: 8 },
+    bag: { cols: 7, rows: 9 },
     hp: 60,
     gold: 18,
     startItems: ['dagger', 'charm'],
@@ -153,7 +153,7 @@ export const CLASSES = [
     id: 'druid',
     name: '德鲁伊',
     desc: '生长与回复，靠时间把优势堆起来。',
-    bag: { cols: 6, rows: 8 },
+    bag: { cols: 7, rows: 9 },
     hp: 65,
     gold: 10,
     startItems: ['mushroom', 'bow'],

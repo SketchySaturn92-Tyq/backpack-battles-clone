@@ -85,6 +85,8 @@ function cacheEls() {
   el.btnBattle = document.getElementById('btn-battle');
   el.btnRefresh = document.getElementById('btn-refresh');
   el.btnAuto = document.getElementById('btn-auto');
+  el.btnExpand = document.getElementById('btn-expand');
+  el.expandInfo = document.getElementById('expand-info');
   el.btnBack = document.getElementById('btn-back');
   el.btnRecipes = document.getElementById('btn-recipes');
   el.btnReset = document.getElementById('btn-reset');
@@ -221,6 +223,12 @@ function renderAll() {
   el.btnBattle.disabled = !prep;
   el.btnRefresh.disabled = !prep || run.header.gold < run.refreshCost();
   el.btnAuto.disabled = !prep;
+  const canExp = run.canExpand();
+  const expCost = run.expandCost();
+  el.btnExpand.disabled = !prep || !canExp || run.header.gold < expCost;
+  el.expandInfo.textContent = canExp
+    ? `${expCost} 金 · 现在 ${run.board.cols}×${run.board.rows}`
+    : `已扩到最大 ${run.board.cols}×${run.board.rows}`;
   el.btnRefresh.textContent = run.refreshCost() === 0 ? '刷新（免费）' : `刷新（${run.refreshCost()} 金）`;
 }
 
@@ -258,7 +266,7 @@ function openUpgradePopup(uid) {
  *   - 宽度：左栏允许的最大宽度（防止格子撑爆左栏）
  * 取两者较小值，背包就能填满面板而不是缩在中间一小块。
  */
-const MAX_BAG_W = 450;
+const MAX_BAG_W = 482;
 
 function fitBoard() {
   if (!run || !el.boardWrap) return;
@@ -295,6 +303,16 @@ function doBuy(i) {
     toast(p && p.ready ? `凑齐了！相邻摆放即可合成 ${p.outputName}` : '买好了，拖动它调整位置');
   }
   renderAll();
+}
+
+function doExpand() {
+  if (!run || playing || run.phase !== PHASE.PREPARE) return;
+  const res = run.expandBag();
+  if (!res.ok) { toast(res.reason); return; }
+  toast(`背包扩大到 ${res.cols}×${res.rows}`);
+  renderAll();
+  // 网格变大后重新按可用空间定格子尺寸
+  requestAnimationFrame(() => { fitBoard(); fitBoard(); });
 }
 
 function doSell(uid) {
@@ -490,6 +508,7 @@ function bindStaticEvents() {
 
   el.skipBtn.addEventListener('click', () => { stage?.skip(); });
 
+  el.btnExpand.addEventListener('click', doExpand);
   el.btnRecipes.addEventListener('click', showRecipes);
   el.btnReset.addEventListener('click', showClassPage);
   el.btnHelp.addEventListener('click', showHelp);
