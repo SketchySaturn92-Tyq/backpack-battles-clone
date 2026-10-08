@@ -2,7 +2,8 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#24160c">
 <title>背包乱斗 · 复刻版</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%2355351f'/%3E%3Crect x='4' y='5' width='10' height='10' rx='2' fill='%23c99a41'/%3E%3Crect x='17' y='5' width='10' height='10' rx='2' fill='%23b8c6dd'/%3E%3Crect x='4' y='18' width='23' height='9' rx='2' fill='%23e2b48c'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="src/css/style.css">
@@ -10,38 +11,37 @@
 <body>
 <div id="app">
 
-  <!-- ========== 顶栏：木墙 + 木牌 ========== -->
+  <!-- ========== 顶栏（压缩成一行） ========== -->
   <header class="topbar">
-    <div class="brand">
-      <h1>背包乱斗 <span class="ver">复刻版</span></h1>
-    </div>
-    <div class="spacer"></div>
+    <h1>背包乱斗 <span class="ver">复刻版</span></h1>
     <div id="stats" class="stats"></div>
+    <div class="topbar-actions">
+      <button id="btn-help" class="ghost icon" title="玩法">?</button>
+      <button id="btn-reset" class="ghost icon" title="换职业">↺</button>
+    </div>
   </header>
 
   <!-- 引导条 -->
   <div id="guide" class="guide"></div>
 
-  <!-- ==================== 一级页面：买 + 整理 ==================== -->
+  <!-- ==================== 一级页面：一屏完成买 + 整理 ==================== -->
   <div id="page-shop" class="page">
 
-    <div class="shop-layout">
+    <div class="stage-layout">
 
-      <!-- 左：背包 + 角色 -->
+      <!-- 左：背包（尽量大） -->
       <section class="col-bag">
-        <div class="panel">
+        <div class="panel bag-panel">
           <div class="panel-head">
             <h2>背包 INVENTORY</h2>
             <span id="capacity" class="cap"></span>
           </div>
 
-          <div class="board-row">
-            <div id="board-wrap" class="board-wrap"><div id="board"></div></div>
-            <div id="sell-zone" class="sell-zone">
-              <span class="sz-icon">✕</span>
-              <span class="sz-text">拖到这里<br>卖出</span>
-            </div>
+          <div id="board-wrap" class="board-wrap">
+            <div id="board"></div>
           </div>
+
+          <div id="detail" class="detail detail-strip"></div>
 
           <div class="actions">
             <button class="primary" id="btn-battle">开始战斗</button>
@@ -49,57 +49,42 @@
             <button id="btn-auto" class="ghost">自动整理</button>
             <span class="spacer"></span>
             <button id="btn-recipes" class="ghost sm">合成图鉴</button>
-            <button id="btn-help" class="ghost icon" title="玩法">?</button>
-            <button id="btn-reset" class="ghost icon" title="换职业">↺</button>
           </div>
         </div>
 
         <div class="panel hero-panel">
           <img id="hero-art" class="hero-art" src="assets/chars/char-0.png" alt="">
-          <div class="hero-info">
-            <div class="panel-head" style="margin:-11px -11px 8px">
-              <h2>角色属性</h2>
-              <span id="hero-class" class="cap"></span>
+          <div class="hero-body">
+            <div class="hero-head">
+              <span id="hero-class" class="hero-class">游侠</span>
             </div>
             <div id="overview" class="overview"></div>
           </div>
         </div>
       </section>
 
-      <!-- 中：商店 + 升级路径 -->
-      <section class="col-shop">
-        <div class="panel">
+      <!-- 右：商店 + 出售（合在一起） -->
+      <aside class="col-rail">
+        <div class="panel shop-panel">
           <div class="panel-head">
             <h2>商店 SHOP</h2>
             <span id="shop-quality" class="quality"></span>
-            <span class="spacer"></span>
-            <span class="hint">左键买 · 右键锁定</span>
           </div>
-          <div id="shop" class="shop-grid six"></div>
+          <div id="shop" class="shop-grid"></div>
           <div id="shop-hints" class="shop-hints"></div>
-        </div>
 
-        <div class="panel">
-          <div class="panel-head">
-            <h2>升级路径</h2>
-            <span class="hint">两件同名同阶相邻即合成</span>
+          <!-- 出售区紧挨货架 -->
+          <div id="sell-zone" class="sell-zone">
+            <span class="sz-icon">✕</span>
+            <span class="sz-text">把道具拖到这里卖出</span>
           </div>
-          <div id="paths" class="paths"></div>
-        </div>
-      </section>
-
-      <!-- 右：详情 + 事件 -->
-      <section class="col-side">
-        <div class="panel">
-          <div class="panel-head"><h2>道具详情</h2></div>
-          <div id="detail" class="detail"></div>
         </div>
 
-        <div class="panel">
+        <div class="panel log-panel">
           <div class="panel-head"><h2>事件</h2></div>
           <div id="log" class="scrollbox short"></div>
         </div>
-      </section>
+      </aside>
 
     </div>
   </div>
@@ -126,28 +111,31 @@
         </div>
       </div>
 
-      <div id="stage-root">
-        <p class="hint center">点「开始战斗」后这里会播放双方角色与攻击动效。</p>
-      </div>
-
-      <div id="battle-log" class="stage-log"></div>
-
-      <div class="fighter-cards">
-        <div class="fc" id="fc-a">
-          <div class="fc-head"><b>你</b><span id="fc-a-build"></span></div>
-          <div class="fc-row"><span>生命</span><b id="fc-a-hp">—</b></div>
-          <div class="fc-row"><span>护甲</span><b id="fc-a-armor">—</b></div>
-          <div class="fc-row"><span>每秒伤害</span><b id="fc-a-dps">—</b></div>
-          <div class="fc-row"><span>暴击 / 反伤</span><b id="fc-a-crit">—</b></div>
-          <div class="fc-row"><span>每秒回复</span><b id="fc-a-regen">—</b></div>
+      <div class="battle-body">
+        <div class="battle-stage-wrap">
+          <div id="stage-root">
+            <p class="hint center">点「开始战斗」后这里会播放双方角色与攻击动效。</p>
+          </div>
+          <div id="battle-log" class="stage-log"></div>
         </div>
-        <div class="fc" id="fc-b">
-          <div class="fc-head"><b id="fc-b-name">对手</b><span id="fc-b-build"></span></div>
-          <div class="fc-row"><span>生命</span><b id="fc-b-hp">—</b></div>
-          <div class="fc-row"><span>护甲</span><b id="fc-b-armor">—</b></div>
-          <div class="fc-row"><span>每秒伤害</span><b id="fc-b-dps">—</b></div>
-          <div class="fc-row"><span>暴击 / 反伤</span><b id="fc-b-crit">—</b></div>
-          <div class="fc-row"><span>每秒回复</span><b id="fc-b-regen">—</b></div>
+
+        <div class="fighter-cards">
+          <div class="fc" id="fc-a">
+            <div class="fc-head"><b>你</b><span id="fc-a-build"></span></div>
+            <div class="fc-row"><span>生命</span><b id="fc-a-hp">—</b></div>
+            <div class="fc-row"><span>护甲</span><b id="fc-a-armor">—</b></div>
+            <div class="fc-row"><span>每秒伤害</span><b id="fc-a-dps">—</b></div>
+            <div class="fc-row"><span>暴击 / 反伤</span><b id="fc-a-crit">—</b></div>
+            <div class="fc-row"><span>每秒回复</span><b id="fc-a-regen">—</b></div>
+          </div>
+          <div class="fc" id="fc-b">
+            <div class="fc-head"><b id="fc-b-name">对手</b><span id="fc-b-build"></span></div>
+            <div class="fc-row"><span>生命</span><b id="fc-b-hp">—</b></div>
+            <div class="fc-row"><span>护甲</span><b id="fc-b-armor">—</b></div>
+            <div class="fc-row"><span>每秒伤害</span><b id="fc-b-dps">—</b></div>
+            <div class="fc-row"><span>暴击 / 反伤</span><b id="fc-b-crit">—</b></div>
+            <div class="fc-row"><span>每秒回复</span><b id="fc-b-regen">—</b></div>
+          </div>
         </div>
       </div>
 

@@ -16,14 +16,13 @@ import { Run, PHASE } from './core/run.js';
 import { CLASSES } from './data/classes.js';
 import { ECON, MATCH } from './data/constants.js';
 import { buildOverview, nextStep } from './core/analyze.js';
-import { progressFor, recipesByTier, shopHints } from './data/recipes.js';
+import { shopHints, progressFor } from './data/recipes.js';
 import { BattleStage } from './ui/stage.js';
 import {
   renderBoard, renderShop, renderDetail, renderStats, renderCapacity, renderGuide,
-  renderOverview, renderShopQuality, renderPaths, renderShopHints,
-  renderFighterCard, renderBattleOverview,
-  moveChip, resetChip, setChipDragging, setHover, setSellActive,
-  cellToPx, LAYOUT,
+  renderOverview, renderShopQuality, renderShopHints, upgradePopupHtml,
+  renderFighterCard, moveChip, resetChip, setChipDragging, setHover, setSellActive,
+  cellToPx, setCellSize, getLayout, getCellSize,
 } from './ui/render.js';
 
 let run = null;
@@ -55,7 +54,6 @@ function cacheEls() {
   el.shop = document.getElementById('shop');
   el.shopQuality = document.getElementById('shop-quality');
   el.shopHints = document.getElementById('shop-hints');
-  el.paths = document.getElementById('paths');
   el.detail = document.getElementById('detail');
   el.overview = document.getElementById('overview');
   el.log = document.getElementById('log');
@@ -129,6 +127,8 @@ function startRun(classId, seed = Math.floor(Math.random() * 1e9)) {
   el.pageBattle.classList.add('hidden');
   el.pageShop.classList.remove('hidden');
   renderAll();
+  // 让背包先占满可用高度，再按结果定格子尺寸
+  requestAnimationFrame(() => { fitBoard(); fitBoard(); });
 }
 
 // ============ 渲染 ============
@@ -156,8 +156,8 @@ function renderAll() {
   renderShopQuality(el.shopQuality, run.shop);
   renderShopHints(el.shopHints, shopHints(run.board, run.shop.slots.filter((s) => !s.sold).map((s) => s.item)));
 
-  renderPaths(el.paths, run.board, recipesByTier());
   renderDetail(el.detail, selectedUid ? run.board.get(selectedUid) : null, run.board);
+  bindDetailButtons();
   renderOverview(el.overview, ov, run.board);
 
   el.heroClass.textContent = run.header.branchName
@@ -178,8 +178,48 @@ function renderAll() {
 }
 
 function renderLog() {
-  el.log.innerHTML = run.log.slice(-60).map((l) => `<div class="lg">${l.text}</div>`).join('');
+  el.log.innerHTML = run.log.slice(-40).map((l) => `<div class="lg">${l.text}</div>`).join('');
   el.log.scrollTop = el.log.scrollHeight;
+}
+
+/** 详情条上的两个按钮：升级路径浮窗 / 卖出 */
+function bindDetailButtons() {
+  const upBtn = document.getElementById('btn-upgrade-info');
+  if (upBtn && selectedUid) {
+    upBtn.addEventListener('click', () => openUpgradePopup(selectedUid));
+  }
+  const sellBtn = document.getElementById('btn-sell-one');
+  if (sellBtn && selectedUid) {
+    sellBtn.addEventListener('click', () => doSell(selectedUid));
+  }
+}
+
+/** 升级浮窗：点武器或详情里的按钮弹出，不再常驻占屏 */
+function openUpgradePopup(uid) {
+  const entry = run.board.get(uid);
+  if (!entry) return;
+  el.overlayBody.innerHTML = upgradePopupHtml(entry, run.board) +
+    '<div class="row mt"><button class="primary" id="ov-close">知道了</button></div>';
+  el.overlay.classList.remove('hidden');
+  document.getElementById('ov-close').addEventListener('click', () => el.overlay.classList.add('hidden'));
+}
+
+/**
+ * 按可用空间给背包定格子尺寸，让背包尽量大又不溢出屏幕。
+ * 这是「一屏展示」的关键：格子大小跟着视口走，而不是写死。
+ */
+function fitBoard() {
+  if (!run || !el.boardWrap) return;
+  const box = el.boardWrap;
+  const cols = run.board.cols;
+  const rows = run.board.rows;
+  const availW = box.clientWidth - 24;
+  const availH = box.clientHeight - 24;
+  if (availW <= 0 || availH <= 0) return;
+  const byW = (availW - cols * 3) / cols;
+  const byH = (availH - rows * 3) / rows;
+  const cell = Math.min(byW, byH);
+  if (setCellSize(cell)) renderAll();
 }
 
 function toast(text) {
@@ -225,18 +265,21 @@ function onGrab(ev, entry) {
   drag = {
     uid: entry.item.uid,
     shape: entry.shape,
+    // 抓取点相对「形状左上角」的偏移：保证拖起来跟手
     offX: ev.clientX - (boardRect.left + anchor.left),
     offY: ev.clientY - (boardRect.top + anchor.top),
+    // 这件道具的静态 left/top，位移按它的增量算（关键：不是绝对坐标）
+    originLeft: anchor.left,
+    originTop: anchor.top,
     startX: ev.clientX,
     startY: ev.clientY,
     boardRect,
     moved: false,
     raf: 0,
-    last: { x: entry.x, y: entry.y, ok: true },
   };
 
-  // pointer capture 能少挂全局监听，但合成事件里没有活跃指针会抛错，
-  // 所以包一层；同时仍然在 window 上挂监听，两种路径都能收到事件。
+  // pointer capture 能少挂全局监听，但合成事件里没有活跃指针会抛错，所以包一层；
+  // 同时仍在 window 上挂监听，两条路径都能收到事件。
   try { ev.target.setPointerCapture?.(ev.pointerId); } catch { /* 合成事件忽略 */ }
   setChipDragging(el.board, entry.item.uid, true);
 
@@ -244,13 +287,12 @@ function onGrab(ev, entry) {
   window.addEventListener('pointerup', onDragEnd);
   window.addEventListener('pointercancel', onDragEnd);
 
-  // 只重绘一次，让选中态立刻可见
   renderAll();
 }
 
 function onDragMove(ev) {
   if (!drag) return;
-  if (Math.abs(ev.clientX - drag.startX) + Math.abs(ev.clientY - drag.startY) > 4) drag.moved = true;
+  if (Math.abs(ev.clientX - drag.startX) + Math.abs(ev.clientY - drag.startY) > 3) drag.moved = true;
   if (!drag.moved) return;
   drag.pending = { x: ev.clientX, y: ev.clientY };
   if (drag.raf) return;
@@ -261,20 +303,24 @@ function applyDragFrame() {
   drag.raf = 0;
   if (!drag || !drag.pending) return;
   const { x: cx, y: cy } = drag.pending;
+
   const rect = drag.boardRect;
-  const px = cx - rect.left - drag.offX;
-  const py = cy - rect.top - drag.offY;
+  // 目标位置（相对背包左上角）
+  const targetLeft = cx - rect.left - drag.offX;
+  const targetTop = cy - rect.top - drag.offY;
+  // 关键：translate 用「目标 - 原始锚点」的增量，
+  // 因为元素本身的 left/top 已经停在原始锚点上了。
+  const dx = targetLeft - drag.originLeft;
+  const dy = targetTop - drag.originTop;
 
-  moveChip(el.board, drag.uid, px, py);
+  moveChip(el.board, drag.uid, dx, dy);
 
-  const gx = Math.round(px / LAYOUT.STEP);
-  const gy = Math.round(py / LAYOUT.STEP);
+  const L = getLayout();
+  const gx = Math.round(targetLeft / L.STEP);
+  const gy = Math.round(targetTop / L.STEP);
   const ok = run.board.canPlace(drag.shape, gx, gy, drag.uid);
   setHover(el.board, run.board.footprint(drag.shape, gx, gy), ok, { x: gx, y: gy });
-
-  const overSell = isOverSellZone(cx, cy);
-  setSellActive(overSell);
-  drag.last = { x: gx, y: gy, ok };
+  setSellActive(isOverSellZone(cx, cy));
 }
 
 function onDragEnd(ev) {
@@ -289,10 +335,11 @@ function onDragEnd(ev) {
   drag = null;
 
   const rect = session.boardRect;
-  const px = ev.clientX - rect.left - session.offX;
-  const py = ev.clientY - rect.top - session.offY;
-  const gx = Math.round(px / LAYOUT.STEP);
-  const gy = Math.round(py / LAYOUT.STEP);
+  const targetLeft = ev.clientX - rect.left - session.offX;
+  const targetTop = ev.clientY - rect.top - session.offY;
+  const L = getLayout();
+  const gx = Math.round(targetLeft / L.STEP);
+  const gy = Math.round(targetTop / L.STEP);
 
   setHover(root, null);
   setSellActive(false);
@@ -392,6 +439,20 @@ function bindStaticEvents() {
   el.btnRecipes.addEventListener('click', showRecipes);
   el.btnReset.addEventListener('click', renderClassPicker);
   el.btnHelp.addEventListener('click', showHelp);
+
+  // 视口变化时重新给背包定尺寸（含手机横竖屏切换）
+  let resizeTimer = 0;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => fitBoard(), 120);
+  });
+  window.addEventListener('orientationchange', () => setTimeout(() => fitBoard(), 260));
+
+  // 双击道具直接打开升级浮窗
+  el.board.addEventListener('dblclick', (ev) => {
+    const chip = ev.target.closest('.shape-item');
+    if (chip) openUpgradePopup(chip.dataset.uid);
+  });
 }
 
 // ============ 战斗（二级页面） ============

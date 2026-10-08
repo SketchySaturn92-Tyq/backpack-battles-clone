@@ -146,7 +146,7 @@ await cdp.eval('document.querySelector(".class-card[data-class=\\"warrior\\"]").
 await sleep(500);
 
 const panels = await cdp.eval('document.querySelectorAll(".panel").length');
-ok('面板数量收敛到 7 个以内', panels <= 7, `${panels} 个`);
+ok('面板数量收敛到 5 个以内', panels <= 5, `${panels} 个`);
 
 const domNodes = await cdp.eval('document.querySelectorAll("*").length');
 ok('DOM 节点总数受控（< 700）', domNodes < 700, `${domNodes} 个`);
@@ -156,13 +156,42 @@ ok('顶栏只留 5 项数值', topStats === 5, `${topStats}`);
 ok('出售区存在', await cdp.eval('!!document.getElementById("sell-zone")'));
 ok('引导条存在', await cdp.eval('!!document.getElementById("guide") && document.getElementById("guide").innerText.length > 4'));
 
+// 布局：背包在左，商店与出售区在最右同一栏
+const layout = await cdp.eval(`
+  (() => {
+    const bag = document.querySelector('.col-bag');
+    const rail = document.querySelector('.col-rail');
+    if (!bag || !rail) return null;
+    const b = bag.getBoundingClientRect(), r = rail.getBoundingClientRect();
+    return {
+      shopInRail: !!rail.querySelector('#shop'),
+      sellInRail: !!rail.querySelector('#sell-zone'),
+      railRightOfBag: r.left >= b.right - 30,
+    };
+  })()
+`);
+ok('商店与出售区同在最右栏', layout && layout.shopInRail && layout.sellInRail, JSON.stringify(layout));
+ok('右栏确实在背包右侧', layout && layout.railRightOfBag, JSON.stringify(layout));
+
+// 一屏展示：整页不滚动
+const scrollInfo = await cdp.eval(`
+  (() => ({
+    docScroll: document.documentElement.scrollHeight,
+    winH: window.innerHeight,
+    bodyOverflow: getComputedStyle(document.body).overflow,
+  }))()
+`);
+ok('整页不滚动（一屏展示）', scrollInfo.docScroll <= scrollInfo.winH + 4, JSON.stringify(scrollInfo));
+
+ok('升级路径不再是常驻面板', await cdp.eval('!document.getElementById("paths")'));
+
 // 一级/二级页面结构
 ok('一级页面存在', await cdp.eval('!!document.getElementById("page-shop")'));
 ok('二级页面存在', await cdp.eval('!!document.getElementById("page-battle")'));
 ok('开局停在二级页面之外', await cdp.eval('document.getElementById("page-battle").classList.contains("hidden")'));
 ok('没有「升级商店」按钮', await cdp.eval('!document.getElementById("btn-upgrade")'));
 ok('商店品质自动显示', await cdp.eval('document.getElementById("shop-quality").innerText.length > 2'));
-await cdp.shot('01-精简后的页面.png');
+await cdp.shot('01-一屏布局.png');
 
 // ============ 2. 伤害引导 ============
 console.log('\n— 伤害引导');
@@ -219,10 +248,25 @@ await cdp.eval(`
 `);
 await sleep(350);
 const detailText = String(await cdp.eval('document.getElementById("detail").innerText'));
-ok('详情显示每秒伤害', detailText.includes('每秒伤害'), detailText.slice(0, 60));
-ok('详情解释伤害构成', detailText.includes('基础伤害') || detailText.includes('÷'), detailText.slice(0, 80));
-ok('详情显示出手顺序与起手时间', detailText.includes('出手顺序') && detailText.includes('起手'));
-ok('详情有卖出按钮', await cdp.eval('!!document.getElementById("btn-sell-one")'));
+ok('详情条显示每秒伤害', detailText.includes('每秒伤害'), detailText.slice(0, 60));
+ok('详情条显示出手顺序与起手时间', detailText.includes('出手顺序') && detailText.includes('起手'));
+ok('详情条有卖出按钮', await cdp.eval('!!document.getElementById("btn-sell-one")'));
+
+// 升级路径改成浮窗：点按钮弹出，弹窗里有数值拆解与升级链
+const upBtnExists = await cdp.eval('!!document.getElementById("btn-upgrade-info")');
+if (upBtnExists) {
+  await cdp.eval('document.getElementById("btn-upgrade-info").click()');
+  await sleep(300);
+  const popText = String(await cdp.eval('document.getElementById("overlay-body").innerText'));
+  ok('点升级路径弹出浮窗', await cdp.eval('!document.getElementById("overlay").classList.contains("hidden")'));
+  ok('浮窗里有升级说明', popText.includes('升级需要') || popText.includes('最终形态'), popText.slice(0, 60));
+  ok('浮窗里有数值与形状', popText.includes('出手顺序') && popText.includes('形状'));
+  await cdp.shot('02b-升级浮窗.png');
+  await cdp.eval('document.getElementById("ov-close").click()');
+  await sleep(200);
+} else {
+  ok('点升级路径弹出浮窗', false, '按钮不存在');
+}
 
 const ovText = String(await cdp.eval('document.getElementById("overview").innerText'));
 ok('角色属性面板显示每秒伤害', ovText.includes('每秒伤害'), ovText.slice(0, 60));
@@ -406,7 +450,7 @@ console.log('\n— 完整一局回归');
 const finished = await cdp.eval(`
   (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
-    for (let i = 0; i < 260; i++) {
+    for (let i = 0; i < 520; i++) {
       const overlay = document.getElementById('overlay');
       if (!overlay.classList.contains('hidden')) {
         if (document.getElementById('ov-again')) return 'over:' + document.getElementById('overlay-body').innerText.slice(0, 60);

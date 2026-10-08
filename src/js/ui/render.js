@@ -11,11 +11,23 @@ import { cells, size } from '../data/shapes.js';
 import { CATEGORIES, RARITY } from '../data/items.js';
 import { BOARD, SHOP_QUALITY } from '../data/constants.js';
 import { itemEffectiveStats, dpsOf, armoredDps } from '../core/analyze.js';
+import { upgradeOf, chainOf } from '../data/recipes.js';
 
-const CELL = BOARD.cell;
+/* 格子尺寸按可用空间自适应：背包要尽量大，但不能溢出屏幕 */
 const GAP = BOARD.gap;
 const PAD = BOARD.pad;
-const STEP = CELL + GAP;
+let CELL = BOARD.cell;
+let STEP = CELL + GAP;
+
+export function setCellSize(px) {
+  const next = Math.max(24, Math.min(76, Math.round(px)));
+  if (next === CELL) return false;
+  CELL = next;
+  STEP = CELL + GAP;
+  return true;
+}
+export function getCellSize() { return CELL; }
+export function getLayout() { return { CELL, GAP, PAD, STEP }; }
 
 export function cellToPx(x, y) {
   return { left: PAD + x * STEP, top: PAD + y * STEP };
@@ -185,7 +197,7 @@ export function renderShop(root, shop, gold, { onBuy, onLock }) {
 export function renderShopQuality(el, shop) {
   const q = shop.quality;
   const next = SHOP_QUALITY.find((s) => s.fromRound > shop.round);
-  el.innerHTML = `<span class="q-badge">${q.label}</span>` +
+  el.innerHTML = `<span class="q-label">品质</span><span class="q-badge">${q.label}</span>` +
     (next ? `<span class="q-next">第 ${next.fromRound} 回合升到「${next.label}」</span>` : '');
 }
 
@@ -284,64 +296,99 @@ export function miniShapeSvg(shape, cat = 'weapon', cell = 8) {
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${rects}</svg>`;
 }
 
-// ============ 详情（带伤害引导） ============
+// ============ 详情（紧凑条 + 升级浮窗） ============
 
+/**
+ * 底部紧凑条：选中道具时只显示最关键的一行信息。
+ * 详细数值与升级路径都收进浮窗，避免常驻面板挤占屏幕。
+ */
 export function renderDetail(el, entry, board) {
   if (!entry) {
-    el.innerHTML = `
-      <p class="hint">点一件道具看它的数值、相邻加成与出手顺序。</p>
-      <p class="hint">拖动调整位置，R 旋转，Delete 或拖到出售区卖出。</p>`;
+    el.innerHTML = '<span class="hint">点一件道具看它的数值与升级路径；拖动调整位置，R 旋转。</span>';
     return;
   }
   const it = entry.item;
   const a = itemEffectiveStats(board, it.uid);
   const stats = a?.stats || it.stats || {};
-  const src = a?.sources || [];
-
-  const base = it.stats || {};
-  const lines = [];
-
-  if (it.cat === 'weapon') {
-    const d0 = base.damage || 0;
-    const dNow = stats.damage || 0;
-    const bonus = dNow - d0;
-    const dps = dpsOf(it, stats);
-    const armored = armoredDps(it, stats);
-    lines.push(`<div class="dpsbox">
-      <div class="dpsbig">${dps ? dps.toFixed(1) : '0'} <span>每秒伤害</span></div>
-      <div class="dpssub">对 20 护甲目标约 ${armored ? armored.toFixed(1) : '0'} / 秒</div>
-      <div class="dpsbreak">${d0} 基础伤害${bonus > 0 ? ` <b>+${bonus}</b> 相邻加成` : ''} ÷ ${(stats.cooldown || 0).toFixed(1)} 秒</div>
-    </div>`);
-  }
-
-  const rows = Object.entries(stats)
-    .filter(([k]) => k !== 'fx' && k !== 'aura')
-    .map(([k, v]) => `<div class="kv"><span>${statName(k)}</span><b>${fmtStat(k, v)}</b></div>`)
-    .join('');
-  lines.push(rows);
-
-  if (stats.aura) {
-    lines.push(`<div class="kv"><span>相邻光环</span><b>${Object.entries(stats.aura).map(([k2, v2]) => `${statName(k2)} +${v2}`).join('，')}</b></div>`);
-  }
-
-  if (src.length) {
-    lines.push(`<div class="srcbox"><div class="srctitle">加成来源</div>${src.map((s) => `<div class="kv"><span>${s.from}</span><b>${statName(s.stat)} +${s.value}</b></div>`).join('')}</div>`);
-  }
-
-  const nb = [...board.neighbors(it.uid)].map((u) => board.get(u)?.item).filter(Boolean);
   const ord = board.orderIndex(it.uid);
-  lines.push(`<div class="kv"><span>出手顺序</span><b>第 ${ord + 1} 位 · 起手 ${(ord * 0.12).toFixed(2)}s</b></div>`);
-  lines.push(`<div class="kv"><span>相邻</span><b>${nb.length ? nb.map((x) => x.name).join('、') : '无'}</b></div>`);
+  const up = upgradeOf(it.id);
+  const have = board.list().filter((e) => e.item.id === it.id).length;
+
+  const dps = dpsOf(it, stats);
+  const parts = [
+    `<b class="d-name">${it.name}</b>`,
+    `<span class="d-tag" style="color:${tierColor(it.tier)}">T${it.tier}</span>`,
+  ];
+  if (dps) parts.push(`<span class="d-dps">每秒伤害 ${dps.toFixed(1)}</span>`);
+  parts.push(`<span class="d-dim">出手顺序 第 ${ord + 1} 位 · 起手 ${(ord * 0.12).toFixed(2)}s</span>`);
+  if (up.canUpgrade) parts.push(`<span class="d-up">升级 ${have}/2 → ${up.output.name}</span>`);
 
   el.innerHTML = `
-    <h3>${it.name}
+    <div class="d-strip">${parts.join('')}</div>
+    <div class="d-btns">
+      ${up.canUpgrade ? '<button class="sm" id="btn-upgrade-info">升级路径</button>' : ''}
+      <button class="sm danger" id="btn-sell-one">卖出</button>
+    </div>`;
+}
+
+/**
+ * 升级浮窗：点武器（或详情里的按钮）时弹出。
+ * 内容 = 完整数值拆解 + 这条升级链 + 相邻加成来源。
+ */
+export function upgradePopupHtml(entry, board) {
+  const it = entry.item;
+  const a = itemEffectiveStats(board, it.uid);
+  const stats = a?.stats || it.stats || {};
+  const src = a?.sources || [];
+  const up = upgradeOf(it.id);
+  const chain = chainOf(it.id);
+  const have = board.list().filter((e) => e.item.id === it.id).length;
+  const ord = board.orderIndex(it.uid);
+  const nb = [...board.neighbors(it.uid)].map((u) => board.get(u)?.item).filter(Boolean);
+
+  // 数值行
+  const rows = Object.entries(stats)
+    .filter(([k]) => k !== 'fx')
+    .map(([k, v]) => `<div class="kv"><span>${statName(k)}</span><b>${fmtStat(k, v)}</b></div>`)
+    .join('');
+
+  // 升级链
+  const chainHtml = chain.map((c, i) => {
+    const me = c.id === it.id;
+    return `${i ? '<span class="ch-arrow">›</span>' : ''}
+      <span class="ch-node ${me ? 'me' : ''}">${c.name}<i>T${c.tier}</i></span>`;
+  }).join('');
+
+  const upBlock = up.canUpgrade ? `
+    <div class="up-block">
+      <div class="up-title">升级需要 ${up.need} 件 ${up.material.name}</div>
+      <div class="up-count ${have >= up.need ? 'ok' : ''}">你现在有 ${have} 件${have >= up.need ? '，放进背包相邻位置即可自动合成' : `，还差 ${up.need - have} 件`}</div>
+      <div class="up-chain">${chainHtml}</div>
+    </div>` : `
+    <div class="up-block">
+      <div class="up-title">这是这条升级链的最终形态</div>
+      <div class="up-chain">${chainHtml}</div>
+    </div>`;
+
+  return `
+    <h2>${it.name}
       <span class="tag" style="color:${tierColor(it.tier)}">T${it.tier}</span>
       <span class="tag">${catName(it.cat)}</span>
-    </h3>
-    <p class="hint">${it.desc || ''}</p>
-    ${lines.join('')}
-    <div class="row mt">
-      <button class="danger sm" id="btn-sell-one">卖出（+${Math.max(1, Math.floor(it.price * 0.6))} 金）</button>
+    </h2>
+    <p class="lead">${it.desc || ''}</p>
+    <div class="pop-grid">
+      <div>
+        <h4>数值</h4>
+        <div class="kv"><span>出手顺序</span><b>第 ${ord + 1} 位 · 起手 ${(ord * 0.12).toFixed(2)}s</b></div>
+        <div class="kv"><span>形状</span><b>${size(it.shape).w}×${size(it.shape).h} · ${cells(it.shape).length} 格</b></div>
+        ${rows}
+        <div class="kv"><span>相邻</span><b>${nb.length ? nb.map((x) => x.name).join('、') : '无'}</b></div>
+      </div>
+      <div>
+        <h4>升级</h4>
+        ${upBlock}
+        ${src.length ? `<div class="srcbox"><div class="srctitle">加成来源</div>${src.map((s) => `<div class="kv"><span>${s.from}</span><b>${statName(s.stat)} +${s.value}</b></div>`).join('')}</div>` : ''}
+      </div>
     </div>`;
 }
 
