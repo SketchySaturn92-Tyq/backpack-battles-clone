@@ -4,59 +4,95 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>背包乱斗 · 复刻版</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231b1f28'/%3E%3Crect x='6' y='7' width='20' height='18' rx='3' fill='%23e8b33c'/%3E%3Crect x='6' y='14' width='20' height='4' fill='%238a6a1e'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231b1f28'/%3E%3Crect x='5' y='6' width='9' height='9' rx='2' fill='%23e8b33c'/%3E%3Crect x='16' y='6' width='9' height='9' rx='2' fill='%234fa3e3'/%3E%3Crect x='5' y='17' width='20' height='9' rx='2' fill='%23e2604a'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="src/css/style.css">
 </head>
 <body>
 <div id="app">
+
   <div class="topbar">
     <div>
-      <h1>背包乱斗 · 复刻版 <span class="sub">Backpack Battles Clone v0.1</span></h1>
-      <div class="sub">塞进背包、相邻生效、自动打一场</div>
+      <h1>背包乱斗 · 复刻版 <span class="sub">v0.2</span></h1>
+      <div class="sub">不规则形状 · 整理即策略 · 位置决定出手</div>
     </div>
     <div class="spacer"></div>
-    <div id="stats" class="row" style="gap:8px"></div>
+    <div id="stats" class="row" style="gap:7px"></div>
   </div>
 
   <div class="layout">
-    <section class="card">
-      <h2>我的背包</h2>
-      <div class="board-wrap"><div id="board"></div></div>
-      <div class="row" style="margin-top:12px">
-        <button class="primary" id="btn-battle">开始战斗</button>
-        <button id="btn-refresh">刷新商店</button>
-        <button id="btn-upgrade">升级商店</button>
-        <div class="spacer"></div>
-        <button id="btn-help" class="ghost sm">玩法</button>
-        <button id="btn-reset" class="sm">重开</button>
-      </div>
-    </section>
 
-    <section>
-      <div class="card" style="margin-bottom:14px">
-        <h2>商店</h2>
-        <div id="shop" class="shop-grid"></div>
-        <div class="tips" style="margin-top:8px">
-          左键买，右键或 Shift+左键锁住不被刷新。买来会先落到背包第一个空位。
+    <!-- 左：背包 -->
+    <section class="col-left">
+      <div class="card">
+        <div class="card-head">
+          <h2>我的背包</h2>
+          <span class="spacer"></span>
+          <span id="capacity" class="hint"></span>
+        </div>
+        <div class="board-wrap"><div id="board"></div></div>
+        <div class="row mt">
+          <button class="primary" id="btn-battle">开始战斗</button>
+          <button id="btn-refresh">刷新商店</button>
+          <button id="btn-upgrade">升级商店</button>
+        </div>
+        <div class="row mt">
+          <button id="btn-auto" class="sm">自动整理</button>
+          <span class="spacer"></span>
+          <button id="btn-help" class="ghost sm">玩法</button>
+          <button id="btn-reset" class="sm">换职业</button>
         </div>
       </div>
 
       <div class="card">
-        <h2>战斗与事件</h2>
-        <div id="log" class="log"></div>
+        <h2>出场顺序（上→下，左→右）</h2>
+        <div id="order-list" class="scrollbox"></div>
       </div>
     </section>
 
-    <section class="card">
-      <h2>道具详情</h2>
-      <div id="detail" class="detail"></div>
+    <!-- 中：战斗舞台 + 商店 -->
+    <section class="col-mid">
+      <div class="card">
+        <h2>战斗</h2>
+        <div id="stage-root"><p class="hint center">开始战斗后这里会播放双方角色与攻击动效。</p></div>
+        <div id="battle-log" class="stage-log"></div>
+      </div>
+
+      <div class="card">
+        <h2>商店</h2>
+        <div id="shop" class="shop-grid"></div>
+        <p class="hint" style="margin-top:8px">
+          左键买，右键或 Shift+左键锁定。买到手只是先塞进第一个能放的位置，怎么摆要靠自己整理。
+        </p>
+      </div>
     </section>
+
+    <!-- 右：详情 -->
+    <section class="col-right">
+      <div class="card">
+        <h2>道具详情</h2>
+        <div id="detail" class="detail"></div>
+      </div>
+
+      <div class="card">
+        <h2>背包装备</h2>
+        <div id="build-list" class="scrollbox"></div>
+      </div>
+
+      <div class="card">
+        <h2>组合联动</h2>
+        <div id="synergy-list" class="scrollbox"></div>
+      </div>
+
+      <div class="card">
+        <h2>事件</h2>
+        <div id="log" class="scrollbox"></div>
+      </div>
+    </section>
+
   </div>
 </div>
 
-<div id="overlay" class="overlay hidden">
-  <div class="modal"><div id="overlay-body"></div></div>
-</div>
+<div id="overlay" class="overlay hidden"><div class="modal"><div id="overlay-body"></div></div></div>
 <div id="toast" class="toast"></div>
 
 <script type="module" src="src/js/main.js"></script>

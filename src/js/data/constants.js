@@ -1,39 +1,43 @@
-/** 全局常量：改这里就能调整节奏与平衡 */
+/** 全局常量（v0.2） */
 
 export const BOARD = {
-  cols: 6,
-  rows: 7,
-  cell: 54,      // 单格像素
-  gap: 2,        // 格间留白
+  cell: 50,        // 单格像素
+  gap: 3,
+  pad: 8,
 };
 
 export const ECON = {
   startGold: 10,
-  startHp: 60,
-  winGold: 1,
-  baseRoundGold: 6,
-  roundGoldStep: 1,   // 每回合多给 1 金
   refreshCost: 1,
   shopSlots: 5,
   levelUpCost: 8,
-  maxShopLevel: 4,
+  maxShopLevel: 5,
+  sellRatio: 0.6,   // 卖出返还比例
+  winGold: 1,
+  baseRoundGold: 6,
+  roundGoldStep: 1,
 };
 
 export const MATCH = {
   maxRounds: 16,
-  winTarget: 10,       // 先到 10 胜即吃鸡
+  branchRound: 4,     // 第几回合开始能选子职业
+  winTarget: 10,
 };
 
 /** 商店等级 → 各阶位出现权重 */
 export const SHOP_TIER_WEIGHT = {
-  1: { 1: 80, 2: 20, 3: 0, 4: 0 },
-  2: { 1: 55, 2: 35, 3: 10, 4: 0 },
-  3: { 1: 35, 2: 38, 3: 23, 4: 4 },
-  4: { 1: 20, 2: 35, 3: 33, 4: 12 },
+  1: { 1: 82, 2: 18, 3: 0, 4: 0 },
+  2: { 1: 58, 2: 32, 3: 10, 4: 0 },
+  3: { 1: 38, 2: 36, 3: 22, 4: 4 },
+  4: { 1: 22, 2: 34, 3: 32, 4: 12 },
+  5: { 1: 12, 2: 28, 3: 38, 4: 22 },
+  6: { 1: 6, 2: 22, 3: 40, 4: 32 },
 };
 
 export const COMBAT = {
-  tick: 0.05,          // 模拟步长（秒）
-  timeLimit: 45,       // 超时判血
-  armorCap: 0.75,      // 护甲减伤上限
+  tick: 0.05,
+  timeLimit: 30,
+  armorCap: 0.75,
+  /** 触发顺序造成的起手延迟：顺序越靠后，首次出手越晚 */
+  orderStep: 0.12,
 };

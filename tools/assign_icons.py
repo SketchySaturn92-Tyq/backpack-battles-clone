@@ -39,9 +39,21 @@ SOURCES = [
     # 饰品：幸运符、腰带、沙漏、磨刀石、毒药瓶、荆棘披风
     ("trinket", 0, "charm"), ("trinket", 1, "belt"), ("trinket", 2, "hourglass"),
     ("trinket", 3, "whetstone"), ("trinket", 4, "poisonvial"), ("trinket", 5, "thornmail"),
-    # 合成专属：交叉双剑(双刃匕首)、蓝焰剑(精钢剑)、狮徽盾(塔盾)、王冠(宝石王冠)
-    ("fused", 0, "twinDagger"), ("fused2", 0, "steelSword"),
-    ("fused", 1, "towerShield"), ("crown", 0, "gemCrown"),
+    # 合成专属：狮徽大盾
+    ("fused", 1, "towerShield"),
+    # v0.2 新增武器（weapon2 包，已按对照图逐格核对）
+    # 0 长弓、1 双刃斧、2 火焰法杖、3 滴毒匕首、4 方头战锤、5 蓝色符文长剑
+    ("weapon2", 0, "longbow"), ("weapon2", 1, "dualAxe"), ("weapon2", 2, "emberStaff"),
+    ("weapon2", 3, "venomDagger"), ("weapon2", 4, "hammer"), ("weapon2", 5, "runeblade"),
+    # v0.2 新增饰品（trinket2 包）
+    # 0 带尖刺的绿披风、1 箭袋、2 红色符文石、3 绿毒瓶、4 金色神像、5 霜冻戒指、6 凤凰羽
+    ("trinket2", 0, "thornCloak"), ("trinket2", 1, "quiver"), ("trinket2", 2, "bloodCharm"),
+    ("trinket2", 3, "poisonFlask"), ("trinket2", 4, "goldenIdol"),
+    ("trinket2", 5, "frostRing"), ("trinket2", 6, "phoenixFeather"),
+    # 复用旧包备用张：护甲 5 银甲 → 荆棘重甲、6 蓝色菱形盾 → 神盾
+    ("armor", 5, "brambleHide"), ("armor", 6, "aegis"),
+    # 食物 7 红瓶药剂 → 小药水；宝石 5 紫色宝石 → 冰晶（颜色偏紫，待重出）
+    ("food", 7, "potion"), ("gem", 5, "iceCrystal"),
 ]
 
 # 输出统一边长（像素风用整数倍缩放 + 固定画布，保证每张图对齐一致）

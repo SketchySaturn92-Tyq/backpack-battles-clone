@@ -1,12 +1,20 @@
 /**
- * 自动战斗：把两边背包解析成战斗单位，按固定步长模拟，产出逐条日志。
- * 确定性：用 mulberry32 种子随机，同一构筑同一种子结果一致。
+ * 自动战斗（v0.2 重写）
+ *
+ * 两个关键设计：
+ *  1. 触发顺序来自背包位置（从上到下、从左到右），顺序越靠后起手越慢。
+ *     「把关键道具摆到左上角先出手」是整理玩法的直接收益。
+ *  2. 战斗产出的是事件流，不是纯文本日志。
+ *     每个事件带 at（时间）、type（斩击/箭矢/火焰…）、from、to，
+ *     前端战斗舞台照着事件播动画。逻辑与表现彻底分开。
  */
 
 import { ITEM_BY_ID } from '../data/items.js';
 import { COMBAT } from '../data/constants.js';
+import { cells } from '../data/shapes.js';
+import { synergyBonus } from '../data/synergies.js';
 
-/** 简单可复现随机数 */
+/** 可复现随机 */
 export function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {
@@ -18,80 +26,196 @@ export function mulberry32(seed) {
 }
 
 /**
- * 把一块背包解析成战斗单位。
- * 规则：
- *  - 基础属性来自场上所有道具累加。
- *  - 宝石与被相邻的道具：宝石的 aura 加成只作用于相邻道具的持有者一次。
- *  - 相邻同类（武器挨武器）提升该武器 10% 攻速，最多 3 层。
+ * 把背包解析成战斗单位。
+ * @param {Board} board
+ * @param {object} opts { name, hp, classDef, branch, seed }
  */
-export function buildUnit(board, { name, hp, seed }) {
-  const entries = board.list();
+export function buildUnit(board, { name, hp, classDef = null, branch = null, seed = 1 }) {
+  const passive = classDef?.passive?.effect || {};
+  const bonus = branch?.bonus || {};
+
   const unit = {
-    name, seed,
-    maxHp: hp, hp,
-    armor: 0, damage: 0, crit: 0, critMult: 1.5,
-    speed: 0,                // 全局攻速加成
-    regen: 0, heal: 0, healCooldown: 4,
-    thorns: 0, poisonOnKill: 0,
+    name,
+    seed,
+    maxHp: hp,
+    hp,
+    armor: 0,
+    armorFlatBonus: 0,
+    damage: 0,
+    crit: 0,
+    critMult: 1.6,
+    speed: passive.speed || 0,
+    globalSpeed: 0,
+    regen: passive.regen || 0,
+    heal: 0,
+    healCooldown: 99,
+    thorns: bonus.thorns || 0,
+    lifesteal: 0,
+    poisonAura: 0,
+    burnMultiplier: bonus.burnMultiplier || 1,
+    magicDamage: passive.magicDamage || 0,
+    rangedDamage: bonus.rangedDamage || 0,
+    critMultBonus: bonus.critMult || 0,
+    hpPerFuse: bonus.hpPerFuse || 0,
+    extraGold: bonus.extraGold || 0,
+    goldPerRound: 0,
+    armorCap: passive.armorCap || COMBAT.armorCap,
+    freeRefresh: !!passive.freeRefresh,
+    healMultiplier: bonus.healMultiplier || 1,
+    overhealShield: !!bonus.overhealShield,
+    thornsFromArmor: bonus.thornsFromArmor || 0,
+    chillPerHit: bonus.chillPerHit || 0,
+    chillMax: bonus.chillMax || 0,
+    poisonPerHit: bonus.poisonPerHit || 0,
+    firstWeaponReady: passive.firstWeaponReady || 0,
+    rageDamage: bonus.rageDamage || 0,
     weapons: [],
-    notes: [],
+    slots: [],
+    order: [],
+    synergies: [],
+    damageMul: 0,
+    hpMul: 0,
+    armorMul: 0,
+    healMul: 0,
+    speedMul: 0,
+    critDamageBonus: 0,
+    poisonMul: 1,
+    burnMul: 1,
+    auraMul: 0,
+    poisonOnHit: 0,
+    chillPerHitBonus: 0,
+    chillMaxBonus: 0,
   };
 
-  // 同类相邻计数：同类别相邻道具数量
-  const categoryNeighborCount = new Map();
+  const entries = board.list();
+  const order = board.triggerOrder();
+  unit.order = order.slice();
+
+  // 整包联动：攒够同类数量触发的额外效果
+  const { bonus: syn, list: synList } = synergyBonus(board);
+  unit.synergies = synList.map((s) => ({ id: s.synergy.id, name: s.synergy.name, desc: s.synergy.desc, count: s.count }));
+
+  // 先算每件道具的相邻同类数量（同类协同）
+  const sameCatNeighbors = new Map();
   for (const e of entries) {
-    const n = board.neighbors(e.item.uid);
-    let same = 0;
-    for (const other of n) {
-      const oi = board.get(other);
-      if (oi && oi.item.cat === e.item.cat) same++;
+    let n = 0;
+    for (const otherUid of board.neighbors(e.item.uid)) {
+      const o = board.get(otherUid);
+      if (o && o.item.cat === e.item.cat) n++;
     }
-    categoryNeighborCount.set(e.item.uid, same);
+    sameCatNeighbors.set(e.item.uid, n);
   }
 
+  // 再逐件结算：基础属性 + 相邻宝石的 aura
   for (const e of entries) {
-    const it = e.item;
-    const sAdjusted = adjustStatsFromAuras(it, e, board);
-    unit.maxHp += sAdjusted.maxHp || 0;
-    unit.armor += sAdjusted.armor || 0;
-    unit.damage += sAdjusted.damage || 0;
-    unit.crit += sAdjusted.crit || 0;
-    unit.critMult = Math.max(unit.critMult, sAdjusted.critMult || 1.5);
-    unit.speed += sAdjusted.speed || 0;
-    unit.regen += sAdjusted.regen || 0;
-    unit.thorns += sAdjusted.thorns || 0;
-    unit.poisonOnKill += sAdjusted.poisonOnKill || 0;
-    if (sAdjusted.heal) {
-      unit.heal += sAdjusted.heal;
-      unit.healCooldown = Math.min(unit.healCooldown, sAdjusted.healCooldown || 4);
+    const item = e.item;
+    const st = effectiveStats(item, e, board);
+
+    unit.maxHp += st.maxHp || 0;
+    unit.armor += st.armor || 0;
+    unit.damage += st.damage || 0;
+    unit.crit += st.crit || 0;
+    if (st.critMult) unit.critMult = Math.max(unit.critMult, st.critMult);
+    unit.speed += st.speed || 0;
+    unit.globalSpeed += st.globalSpeed || 0;
+    unit.regen += st.regen || 0;
+    unit.thorns += st.thorns || 0;
+    unit.lifesteal += st.lifesteal || 0;
+    unit.poisonAura += st.poisonAura || 0;
+    unit.goldPerRound += st.goldPerRound || 0;
+    if (st.heal) {
+      unit.heal += st.heal;
+      unit.healCooldown = Math.min(unit.healCooldown, st.healCooldown || 4);
     }
 
-    if (it.cat === 'weapon' && sAdjusted.damage) {
-      const stacks = Math.min(3, categoryNeighborCount.get(it.uid) || 0);
-      const cd = Math.max(0.35, (sAdjusted.cooldown || 1.6) * (1 - 0.1 * stacks));
+    const idx = order.indexOf(item.uid);
+    unit.slots.push({
+      uid: item.uid, name: item.name, cat: item.cat, order: idx,
+      cell: { x: e.x, y: e.y },
+    });
+
+    if (item.slot === 'weapon' && (st.damage || 0) > 0) {
+      // 同类相邻最多 3 层，每层 -8% 冷却
+      const stacks = Math.min(3, sameCatNeighbors.get(item.uid) || 0);
+      let cd = (st.cooldown || 1.6) * (1 - 0.08 * stacks);
+      cd = Math.max(0.4, cd / (1 + unit.globalSpeed));
+      // 触发顺序决定起手延迟：越靠后越晚出手
+      const startDelay = (idx >= 0 ? idx : 0) * COMBAT.orderStep;
+      const isFirst = idx === unit.order[0];
+      const readyFactor = isFirst ? unit.firstWeaponReady : 0;
       unit.weapons.push({
-        uid: it.uid, name: it.name, damage: sAdjusted.damage,
-        cooldown: cd, timer: cd, burn: sAdjusted.burn || 0,
-        pierce: sAdjusted.pierce || 0, stacks,
+        uid: item.uid,
+        name: item.name,
+        order: idx,
+        damage: st.damage || 0,
+        cooldown: cd,
+        timer: startDelay + cd * (1 - readyFactor),
+        burn: st.burn || 0,
+        poison: (st.poison || 0) + unit.poisonAura,
+        pierce: st.pierce || 0,
+        armorBreak: st.armorBreak || 0,
+        frost: st.frost || 0,
+        ranged: !!st.ranged,
+        magic: !!st.magic,
+        fx: st.fx || 'slash',
+        stacks,
+        hits: 0,
       });
     }
   }
 
   unit.hp = unit.maxHp;
+
+  // 联动数值最后统一结算，避免和职业被动混淆
+  unit.damageMul += syn.damageMul;
+  unit.crit += syn.critMul;
+  unit.speed += syn.speedMul;
+  unit.critDamageBonus += syn.critDamage;
+  unit.thorns += syn.thorns;
+  unit.regen += syn.regen;
+  unit.healMultiplier *= (1 + syn.healMul);
+  unit.rangedDamage += syn.rangedDamage;
+  unit.poisonOnHit += syn.poisonOnHit;
+  unit.chillPerHitBonus += syn.chillPerHit;
+  unit.chillMaxBonus += syn.chillMax;
+  unit.burnMul *= syn.burnMul;
+  unit.poisonMul *= syn.poisonMul;
+  unit.auraMul += syn.auraMul;
+
+  // 生命与护甲的百分比加成放在最后
+  unit.maxHp = Math.round(unit.maxHp * (1 + syn.hpMul) * (1 + (unit.hpMul || 0)));
+  unit.armor = Math.round(unit.armor * (1 + syn.armorMul) * (1 + (unit.armorMul || 0)));
+  unit.hp = unit.maxHp;
+
+  // 武器伤害补上联动倍率
+  if (unit.damageMul) {
+    for (const w of unit.weapons) {
+      w.damage = Math.round(w.damage * (1 + unit.damageMul));
+    }
+  }
+  if (unit.burnMul !== 1) {
+    for (const w of unit.weapons) if (w.burn) w.burn = Math.round(w.burn * unit.burnMul);
+  }
+  if (unit.poisonMul !== 1) {
+    for (const w of unit.weapons) if (w.poison) w.poison = Math.round(w.poison * unit.poisonMul);
+  }
+
   return unit;
 }
 
-/** 相邻宝石的 aura 加成，只吃相邻的一次 */
-function adjustStatsFromAuras(item, entry, board) {
-  const s = { ...(item.stats || {}) };
-  const out = { ...s };
-  for (const otherUid of board.neighbors(item.uid)) {
-    const other = board.get(otherUid);
-    if (!other) continue;
-    const aura = other.item.stats?.aura;
+/** 一件道具的最终属性：自身 + 相邻道具给的 aura */
+function effectiveStats(item, entry, board) {
+  const out = { ...(item.stats || {}) };
+  for (const uid of board.neighbors(entry.item.uid)) {
+    const o = board.get(uid);
+    const aura = o?.item?.stats?.aura;
     if (!aura) continue;
     for (const [k, v] of Object.entries(aura)) {
       out[k] = (out[k] || 0) + v;
+    }
+    // 箭袋这类只强化远程的，单独处理
+    if (o.item.stats.aura.rangedDamage && out.ranged) {
+      out.damage = (out.damage || 0) + o.item.stats.aura.rangedDamage;
     }
   }
   return out;
@@ -99,57 +223,127 @@ function adjustStatsFromAuras(item, entry, board) {
 
 /**
  * 模拟一场战斗。
- * @returns {{log:object[], winner:'A'|'B'|'draw', rounds:number}}
+ * @returns {{events:object[], winner:string, duration:number, hpA:number, hpB:number, stats:object}}
  */
-export function simulate(unitA, unitB, { seed = Date.now() } = {}) {
+export function simulate(unitA, unitB, { seed = 1 } = {}) {
   const rng = mulberry32(seed);
   const A = cloneUnit(unitA, rng);
   const B = cloneUnit(unitB, rng);
-  const log = [];
-  let t = 0;
+  const events = [];
+  const push = (type, data) => events.push({ seq: events.length, t: +time.toFixed(2), type, ...data });
+
+  let time = 0;
   let guard = 0;
+  const poisoned = new Map();   // uid → { stacks, tickTimer }
 
-  const push = (type, text, extra = {}) => log.push({ t: +t.toFixed(2), type, text, ...extra });
+  push('start', {
+    a: { name: A.name, hp: A.maxHp, weapons: A.weapons.length },
+    b: { name: B.name, hp: B.maxHp, weapons: B.weapons.length },
+  });
 
-  push('start', `${A.name}（${A.maxHp} 血）对上 ${B.name}（${B.maxHp} 血）`);
+  while (A.hp > 0 && B.hp > 0 && time < COMBAT.timeLimit && guard++ < 40000) {
+    time += COMBAT.tick;
 
-  while (A.hp > 0 && B.hp > 0 && t < COMBAT.timeLimit && guard++ < 20000) {
-    t += COMBAT.tick;
-    // 武器冷却
-    for (const [side, src, dst] of [[A, A, B], [B, B, A]]) {
+    for (const [src, dst, side, foeSide] of [[A, B, 'A', 'B'], [B, A, 'B', 'A']]) {
       if (src.hp <= 0 || dst.hp <= 0) continue;
+
       for (const w of src.weapons) {
-        w.timer -= COMBAT.tick * (1 + src.speed);
-        if (w.timer <= 0) {
-          w.timer += w.cooldown;
-          const hit = resolveHit(src, dst, w, rng);
-          push('attack', `${src.name} 的 ${w.name} 命中 ${dst.name} 造成 ${hit.dmg} 点${hit.crit ? '暴击' : ''}伤害`,
-            { side, dmg: hit.dmg, crit: hit.crit, hp: dst.hp });
-          if (w.burn) {
-            dst.hp -= w.burn;
-            push('burn', `${dst.name} 被点燃，额外 ${w.burn} 点伤害`, { side, hp: dst.hp });
+        const slow = src.chill ? 1 - Math.min(src.chillMax, src.chill) * src.chillPerHit : 1;
+        w.timer -= COMBAT.tick * (1 + src.speed) * Math.max(0.4, slow);
+        if (w.timer > 0) continue;
+        w.timer += w.cooldown;
+
+        const hit = resolveHit(src, dst, w, rng, { side, foeSide, time });
+        w.hits++;
+
+        push('attack', {
+          side, foeSide,
+          weaponUid: w.uid, weaponName: w.name,
+          order: w.order, fx: w.fx,
+          damage: hit.damage, crit: hit.crit,
+          targetHpAfter: Math.max(0, dst.hp),
+          targetMaxHp: dst.maxHp,
+          sourceHpAfter: Math.max(0, src.hp),
+          sourceMaxHp: src.maxHp,
+        });
+
+        // 吸血
+        if (src.lifesteal > 0 && hit.damage > 0) {
+          const healed = Math.max(1, Math.round(hit.damage * src.lifesteal));
+          src.hp = Math.min(src.maxHp, src.hp + healed);
+          push('heal', { side, amount: healed, hpAfter: src.hp, maxHp: src.maxHp, reason: 'lifesteal' });
+        }
+
+        // 点燃
+        if (w.burn > 0) {
+          const burn = Math.round(w.burn * src.burnMultiplier);
+          dst.hp -= burn;
+          push('burn', { side: foeSide, amount: burn, hpAfter: Math.max(0, dst.hp), maxHp: dst.maxHp });
+        }
+
+        // 中毒叠层（联动的 poisonOnHit 也折算进来）
+        const poisonAmount = (w.poison || 0) + src.poisonPerHit + (src.poisonOnHit || 0);
+        if (poisonAmount > 0) {
+          const rec = poisoned.get(dst.name) || { stacks: 0, timer: 1 };
+          rec.stacks += poisonAmount;
+          poisoned.set(dst.name, rec);
+          push('poison', { side: foeSide, stacks: rec.stacks });
+        }
+
+        // 冰霜减速（含联动层数上限）
+        if (w.frost > 0 || src.chillPerHitBonus > 0) {
+          const cap = (dst.chillMax || 5) + (src.chillMaxBonus || 0);
+          dst.chill = Math.min(cap, (dst.chill || 0) + 1);
+          push('frost', { side: foeSide, chill: dst.chill });
+        }
+
+        // 破甲
+        if (w.armorBreak > 0) {
+          dst.armor = Math.max(0, dst.armor - w.armorBreak);
+          push('armorBreak', { side: foeSide, armorAfter: dst.armor, amount: w.armorBreak });
+        }
+
+        // 反伤
+        const thorns = dst.thorns + (dst.thornsFromArmor ? Math.round(dst.armor * dst.thornsFromArmor) : 0);
+        if (thorns > 0 && dst.hp > 0) {
+          src.hp -= thorns;
+          push('thorns', { side, foeSide, amount: thorns, hpAfter: Math.max(0, src.hp), maxHp: src.maxHp });
+        }
+      }
+
+      // 治疗与回复
+      if (src.hp > 0) {
+        if (src.heal > 0 && src.hp < src.maxHp) {
+          src.healTimer = (src.healTimer || 0) + COMBAT.tick;
+          if (src.healTimer >= src.healCooldown) {
+            src.healTimer -= src.healCooldown;
+            const amount = Math.round(src.heal * src.healMultiplier);
+            src.hp = Math.min(src.maxHp, src.hp + amount);
+            push('heal', { side, amount, hpAfter: src.hp, maxHp: src.maxHp, reason: 'item' });
+          }
+        }
+        if (src.regen > 0) {
+          src.regenAcc = (src.regenAcc || 0) + src.regen * COMBAT.tick;
+          if (src.regenAcc >= 1) {
+            const amount = Math.floor(src.regenAcc);
+            src.regenAcc -= amount;
+            src.hp = Math.min(src.maxHp, src.hp + amount);
+            push('regen', { side, amount, hpAfter: src.hp, maxHp: src.maxHp });
           }
         }
       }
     }
-    // 回复
-    for (const u of [A, B]) {
-      if (u.hp <= 0) continue;
-      if (u.heal > 0 && u.hp < u.maxHp) {
-        u.healTimer = (u.healTimer || 0) + COMBAT.tick;
-        if (u.healTimer >= u.healCooldown) {
-          u.healTimer -= u.healCooldown;
-          u.hp = Math.min(u.maxHp, u.hp + u.heal);
-          push('heal', `${u.name} 回复 ${u.heal} 点生命`, { hp: u.hp });
-        }
-      }
-      if (u.regen > 0) {
-        u.regenAcc = (u.regenAcc || 0) + u.regen * COMBAT.tick;
-        if (u.regenAcc >= 1) {
-          const amount = Math.floor(u.regenAcc);
-          u.regenAcc -= amount;
-          u.hp = Math.min(u.maxHp, u.hp + amount);
-        }
+
+    // 中毒结算：每秒掉一次
+    for (const [name, rec] of poisoned) {
+      const unit = A.name === name ? A : (B.name === name ? B : null);
+      if (!unit || unit.hp <= 0) continue;
+      rec.timer -= COMBAT.tick;
+      if (rec.timer <= 0) {
+        rec.timer += 1;
+        const dmg = Math.max(1, Math.round(rec.stacks / 3));
+        unit.hp -= dmg;
+        push('poisonTick', { target: name, amount: dmg, hpAfter: Math.max(0, unit.hp), maxHp: unit.maxHp });
       }
     }
   }
@@ -160,42 +354,93 @@ export function simulate(unitA, unitB, { seed = Date.now() } = {}) {
   else if (A.hp > 0 && B.hp <= 0) winner = 'A';
   else winner = A.hp === B.hp ? 'draw' : (A.hp > B.hp ? 'A' : 'B');
 
-  push('end', `战斗结束：${winnerLabel(winner, A, B)}`,
-    { winner, hpA: Math.max(0, A.hp), hpB: Math.max(0, B.hp) });
+  push('end', {
+    winner,
+    hpA: Math.max(0, A.hp), hpB: Math.max(0, B.hp),
+    maxHpA: A.maxHp, maxHpB: B.maxHp,
+  });
 
-  return { log, winner, rounds: +t.toFixed(2), hpA: Math.max(0, A.hp), hpB: Math.max(0, B.hp) };
+  return {
+    events,
+    winner,
+    duration: +time.toFixed(2),
+    hpA: Math.max(0, A.hp),
+    hpB: Math.max(0, B.hp),
+    stats: summarize(events, A, B),
+  };
 }
 
 function cloneUnit(u, rng) {
   return {
     ...u,
     hp: u.hp,
-    weapons: u.weapons.map((w) => ({ ...w, timer: w.cooldown * (0.2 + rng() * 0.6) })),
+    chill: 0,
+    weapons: u.weapons.map((w) => ({ ...w, timer: w.timer, hits: 0 })),
   };
 }
 
-function resolveHit(src, dst, weapon, rng) {
+function resolveHit(src, dst, weapon, rng, ctx) {
   let dmg = weapon.damage + src.damage;
-  const roll = rng();
-  const crit = roll < src.crit;
-  if (crit) dmg = Math.round(dmg * src.critMult);
+  if (weapon.magic) dmg = Math.round(dmg * (1 + src.magicDamage));
+  if (weapon.ranged) dmg = Math.round(dmg * (1 + src.rangedDamage));
+  // 狂战士：血越少伤害越高
+  if (src.rageDamage) {
+    const missing = 1 - (src.hp / src.maxHp);
+    dmg = Math.round(dmg * (1 + src.rageDamage * missing));
+  }
+  const critRate = src.crit + (weapon.critBonus || 0);
+  const crit = rng() < critRate;
+  // 暴击倍率 = 职业基础 × 分支加成 × 联动加成
+  const mult = Math.max(src.critMult, src.critMultBonus || 0) + (src.critDamageBonus || 0);
+  if (crit) dmg = Math.round(dmg * mult);
   if (weapon.pierce) dmg += weapon.pierce;
-  const reduce = Math.min(COMBAT.armorCap, dst.armor / 100);
+
+  const reduce = Math.min(src.armorCap, dst.armor / 100);
   dmg = Math.max(1, Math.round(dmg * (1 - reduce)));
   dst.hp -= dmg;
-  if (dst.thorns > 0 && dst.hp > 0) {
-    src.hp -= dst.thorns;
+  return { damage: dmg, crit };
+}
+
+/** 给结算面板用的概览 */
+function summarize(events, A, B) {
+  const attacks = events.filter((e) => e.type === 'attack');
+  const perWeapon = {};
+  for (const a of attacks) {
+    const k = a.weaponName;
+    perWeapon[k] = perWeapon[k] || { hits: 0, damage: 0, crits: 0, fx: a.fx };
+    perWeapon[k].hits++;
+    perWeapon[k].damage += a.damage;
+    if (a.crit) perWeapon[k].crits++;
   }
-  return { dmg, crit };
+  return {
+    totalAttacks: attacks.length,
+    perWeapon,
+    firstStrike: attacks.length ? attacks.reduce((m, a) => (a.t < m.t ? a : m), attacks[0]) : null,
+  };
 }
 
-function winnerLabel(winner, A, B) {
-  if (winner === 'draw') return '平局';
-  return winner === 'A' ? `${A.name} 获胜` : `${B.name} 获胜`;
-}
-
-/** 把构筑强度折算成一个粗略分数，用于校验平衡 */
+/** 构筑强度粗算，用于对手匹配与平衡抽样 */
 export function unitPower(unit) {
   const dps = unit.weapons.reduce((s, w) => s + w.damage / w.cooldown, 0);
-  return Math.round(dps * 10 + unit.maxHp + unit.armor * 2 + unit.regen * 20);
+  const defense = unit.maxHp + unit.armor * 2.5 + unit.regen * 25 + unit.thorns * 3;
+  return Math.round(dps * 9 + defense);
+}
+
+/** 把事件流压成给人看的文本（日志面板用） */
+export function eventText(ev, names = { A: '你', B: '对手' }) {
+  const who = (s) => names[s] || s;
+  switch (ev.type) {
+    case 'start': return `${ev.a.name}（${ev.a.hp} 血 / ${ev.a.weapons} 件武器）对上 ${ev.b.name}（${ev.b.hp} 血 / ${ev.b.weapons} 件武器）`;
+    case 'attack': return `${who(ev.side)} 的 ${ev.weaponName} 命中 ${who(ev.foeSide)}，造成 ${ev.damage} 点伤害${ev.crit ? '（暴击）' : ''}`;
+    case 'heal': return `${who(ev.side)} 回复 ${ev.amount} 点生命`;
+    case 'regen': return `${who(ev.side)} 持续回复 ${ev.amount} 点`;
+    case 'burn': return `${who(ev.side)} 被点燃，受到 ${ev.amount} 点火焰伤害`;
+    case 'poison': return `${who(ev.side)} 中毒加深至 ${ev.stacks} 层`;
+    case 'poisonTick': return `中毒发作，${ev.target} 失去 ${ev.amount} 点生命`;
+    case 'frost': return `${who(ev.side)} 被减速（${ev.chill} 层）`;
+    case 'armorBreak': return `${who(ev.side)} 的护甲被击碎 ${ev.amount} 点`;
+    case 'thorns': return `${who(ev.side)} 被反弹 ${ev.amount} 点伤害`;
+    case 'end': return `战斗结束：${ev.winner === 'draw' ? '平局' : who(ev.winner) + ' 获胜'}`;
+    default: return ev.type;
+  }
 }

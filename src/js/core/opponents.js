@@ -1,68 +1,102 @@
 /**
- * 对手池：按回合生成越来越强的 AI 构筑，并逐回合提供表演用名字与头像风格。
- * 设计目标：第 1 回合对手约等于新手，第 16 回合对手是成型 build。
+ * 对手池（v0.2）
+ *
+ * 对手也遵守同样的规则：不规则形状要真的塞进背包、位置决定触发顺序。
+ * 所以对手的构筑是在一个真实网格上「摆放」出来的，而不是凭空给属性。
  */
 
-import { ITEMS, ITEM_BY_ID, poolByTier } from '../data/items.js';
+import { ITEMS, ITEM_BY_ID, poolByTier, RECIPE_MAP } from '../data/items.js';
 import { Board } from './grid.js';
 import { mulberry32 } from './combat.js';
 
 export const OPPONENT_NAMES = [
-  '新手游侠', '流浪佣兵', '拾荒者', '蘑菇贩子', '宝石匠',
-  '毒刃刺客', '铁盾卫士', '酒馆老板', '披风猎人', '符文学者',
-  '双刃舞者', '龙裔骑士', '贤者学徒', '荆棘行者', '传说冒险家', '冠军·福西法',
+  '新手佣兵', '流浪拾荒者', '蘑菇贩子', '宝石匠学徒', '毒刃刺客',
+  '铁盾卫士', '酒馆打手', '披风猎人', '符文学者', '双刃舞者',
+  '龙裔骑士', '贤者学徒', '荆棘行者', '冰霜女巫', '传说冒险家', '冠军·福西法',
 ];
 
-const ARCHETYPES = ['blade', 'guard', 'poison', 'gem', 'feast'];
+const ARCHETYPES = ['blade', 'guard', 'poison', 'gem', 'feast', 'mage'];
 const ARCHETYPE_LABEL = {
-  blade: '双刃流', guard: '铁壁流', poison: '毒系流', gem: '宝石流', feast: '饱食流',
+  blade: '双刃流', guard: '铁壁流', poison: '毒系流',
+  gem: '宝石流', feast: '饱食流', mage: '法术流',
+};
+const PREFER = {
+  blade: ['weapon'],
+  guard: ['armor', 'trinket'],
+  poison: ['trinket', 'weapon'],
+  gem: ['gem', 'weapon'],
+  feast: ['food', 'armor'],
+  mage: ['weapon', 'gem'],
 };
 
 /**
  * 生成第 round 回合的对手。
- * 强度曲线：可买道具数 ≈ 3 + round，商店等级随回合提升。
+ * 强度靠三条曲线叠出来：预算、商店等级、血量。
  */
 export function makeOpponent(round, seed = round * 977) {
   const rng = mulberry32(seed);
-  const idx = Math.min(OPPONENT_NAMES.length - 1, Math.floor((round - 1) / 1.1));
-  const name = OPPONENT_NAMES[Math.max(0, idx)];
+  const nameIdx = Math.min(OPPONENT_NAMES.length - 1, Math.floor((round - 1) / 1.1));
+  const name = OPPONENT_NAMES[Math.max(0, nameIdx)];
   const arch = ARCHETYPES[Math.floor(rng() * ARCHETYPES.length)];
-  const shopLevel = Math.min(4, 1 + Math.floor(round / 5));
+  const shopLevel = Math.min(5, 1 + Math.floor(round / 4));
 
-  const board = new Board(6, 7);
-  const budget = 4 + round * 3;
+  // 背包随回合变大一点点，前期小包更能体现整理压力
+  const cols = round < 5 ? 5 : 6;
+  const rows = round < 5 ? 7 : 8;
+  const board = new Board(cols, rows);
+
+  const budget = 5 + round * 3;
   let spent = 0;
   let uidSeq = 0;
-  const wanted = preferFor(arch);
-
   let guard = 0;
-  while (spent < budget && guard++ < 200) {
+  const wanted = PREFER[arch] || ['weapon'];
+
+  while (spent < budget && guard++ < 220) {
     const tier = weightedTier(shopLevel, round, rng);
-    const pool = poolByTier(tier).filter((i) => wanted.includes(i.cat) || rng() < 0.35);
-    const item = (pool.length ? pool : poolByTier(tier))[Math.floor(rng() * Math.max(1, (pool.length ? pool : poolByTier(tier)).length))];
-    if (!item) break;
-    const instance = { ...item, uid: `ai-${round}-${uidSeq++}` };
-    const spot = board.findFreeSpot(instance.shape);
-    if (spot && board.place(instance, spot.x, spot.y, instance.shape)) {
-      spent += item.price;
+    const all = poolByTier(tier);
+    const preferred = all.filter((i) => wanted.includes(i.cat));
+    const pick = (preferred.length && rng() < 0.72 ? preferred : all);
+    if (!pick.length) break;
+    const base = pick[Math.floor(rng() * pick.length)];
+    const inst = { ...base, uid: `ai-${round}-${uidSeq++}` };
+    const spot = board.findFreeSpot(inst.shape);
+    if (spot && board.place(inst, spot.x, spot.y, inst.shape)) {
+      spent += base.price;
     } else {
-      break;
+      // 找不到空位就换个便宜的试，别死循环
+      const cheap = all.filter((i) => i.price <= 3 && board.findFreeSpot(i.shape));
+      if (!cheap.length) break;
+      const alt = cheap[Math.floor(rng() * cheap.length)];
+      const altInst = { ...alt, uid: `ai-${round}-${uidSeq++}` };
+      const s2 = board.findFreeSpot(altInst.shape);
+      if (!s2) break;
+      board.place(altInst, s2.x, s2.y, altInst.shape);
+      spent += alt.price;
     }
   }
 
-  // 血量随回合略增，避免一回合被秒
+  // 后期对手偶尔会完成一次合成，模拟真人会整理
+  if (round >= 6 && rng() < 0.5) {
+    tryFuseForAi(board, round, rng);
+  }
+
   const hp = 55 + round * 2;
   return { name: `${name}·${ARCHETYPE_LABEL[arch]}`, board, hp, round, arch };
 }
 
-function preferFor(arch) {
-  switch (arch) {
-    case 'blade': return ['weapon'];
-    case 'guard': return ['armor'];
-    case 'poison': return ['trinket', 'food'];
-    case 'gem': return ['gem', 'weapon'];
-    case 'feast': return ['food', 'armor'];
-    default: return ['weapon'];
+function tryFuseForAi(board, round, rng) {
+  for (const e of board.list()) {
+    const out = RECIPE_MAP[`${e.item.id}+${e.item.id}`];
+    if (!out) continue;
+    const partner = board.list().find((o) => o.item.id === e.item.id && o.item.uid !== e.item.uid);
+    if (!partner) continue;
+    const outItem = ITEM_BY_ID[out];
+    board.remove(e.item.uid);
+    board.remove(partner.item.uid);
+    const inst = { ...outItem, uid: `ai-${round}-fused-${Math.floor(rng() * 1e6)}` };
+    const spot = board.findFreeSpot(inst.shape);
+    if (spot) board.place(inst, spot.x, spot.y, inst.shape);
+    return;
   }
 }
 

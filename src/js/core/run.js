@@ -1,180 +1,268 @@
 /**
- * 单局流程：准备阶段 → 战斗阶段 → 结算 → 下一回合。
- * 只维护状态与规则，不直接渲染。
+ * 单局流程（v0.2）
+ *
+ * 与 v0.1 的关键差别：
+ *  - 先选职业，再开局；背包尺寸由职业决定
+ *  - 第 4 回合开始可选子职业分支
+ *  - 合成会给驯兽师加血上限之类的职业联动
+ *  - 道具买到手是「进背包第一个能放的位置」，之后全靠玩家整理
  */
 
-import { Board, shapeCells } from './grid.js';
+import { Board, normalize } from './grid.js';
 import { Shop } from './shop.js';
-import { buildUnit, simulate, unitPower } from './combat.js';
+import { buildUnit, simulate, unitPower, eventText } from './combat.js';
 import { makeOpponent } from './opponents.js';
 import { ECON, MATCH } from '../data/constants.js';
 import { RECIPE_MAP, ITEM_BY_ID } from '../data/items.js';
+import { CLASS_BY_ID, branchOf } from '../data/classes.js';
 
 export const PHASE = {
+  CHOOSE_CLASS: 'choose_class',
   PREPARE: 'prepare',
   BATTLE: 'battle',
   RESULT: 'result',
+  BRANCH: 'branch',
   OVER: 'over',
 };
 
 let uidSeq = 0;
-export function nextUid() { return `p${Date.now().toString(36)}-${uidSeq++}`; }
+export function nextUid() { return `p${Date.now().toString(36)}${(uidSeq++).toString(36)}`; }
 
 export class Run {
-  constructor({ seed = 20261008 } = {}) {
-    this.header = { name: '游侠', hp: ECON.startHp, gold: ECON.startGold, round: 1, wins: 0, losses: 0, streak: 0 };
-    this.board = new Board(6, 7);
+  constructor({ seed = 20261008, classId = 'ranger' } = {}) {
+    const cls = CLASS_BY_ID[classId] || CLASS_BY_ID.ranger;
+    this.seed = seed;
+    this.classDef = cls;
+    this.branch = null;
+
+    this.header = {
+      className: cls.name,
+      classId: cls.id,
+      branchName: null,
+      hp: cls.hp,
+      gold: cls.gold,
+      round: 1,
+      wins: 0,
+      losses: 0,
+      streak: 0,
+      fuses: 0,
+    };
+
+    this.board = new Board(cls.bag.cols, cls.bag.rows);
     this.shop = new Shop(seed);
     this.phase = PHASE.PREPARE;
     this.log = [];
     this.history = [];
     this.lastResult = null;
-    this.seed = seed;
-    this.note('开局：60 血、10 金，先买几件道具塞进背包。');
+    this.pendingBranch = false;
+
+    for (const id of cls.startItems) {
+      const base = ITEM_BY_ID[id];
+      if (!base) continue;
+      const inst = { ...base, uid: nextUid() };
+      const spot = this.board.findFreeSpot(inst.shape);
+      if (spot) this.board.place(inst, spot.x, spot.y, inst.shape);
+    }
+
+    this.note(`选择职业：${cls.name}（${cls.passive.name}）`);
+    this.note(`背包 ${cls.bag.cols}×${cls.bag.rows}，先买几件道具试着塞进去。`);
   }
 
-  note(text) { this.log.push({ round: this.header.round, text }); }
+  get bonus() { return this.branch?.bonus || {}; }
 
-  // ---------- 准备阶段动作 ----------
+  note(text) { this.log.push({ round: this.header.round, text, kind: 'note' }); }
+
+  // ---------- 商店 ----------
+
+  refreshCost() {
+    return (this.classDef.passive.effect.freeRefresh) ? 0 : (this.shop.level >= 3 ? ECON.refreshCost + 1 : ECON.refreshCost);
+  }
 
   canAfford(item) { return this.header.gold >= item.price; }
 
   buy(index) {
     const res = this.shop.buy(index, this.header.gold);
-    // 买不起属于高频误触，只让 UI 弹提示，不刷日志
     if (!res.ok) return { ok: false, reason: res.reason };
+
     this.header.gold -= res.cost;
-    const item = { ...res.item, uid: nextUid() };
-    const spot = this.board.findFreeSpot(item.shape);
+    const inst = { ...res.item, uid: nextUid() };
+    const spot = this.board.findFreeSpot(inst.shape);
+
     if (!spot) {
-      // 放不下就退钱并把卡片还回货架，避免玩家吃暗亏
       this.header.gold += res.cost;
       this.shop.unsell(index);
-      this.note(`背包放不下 ${item.name}，已退款。`);
-      return { ok: false, reason: '背包放不下，已退款' };
+      return { ok: false, reason: `${inst.name} 塞不下了，先整理背包` };
     }
-    this.board.place(item, spot.x, spot.y, item.shape);
-    this.note(`买入 ${item.name}（-${res.cost} 金）`);
-    return { ok: true, item };
+
+    this.board.place(inst, spot.x, spot.y, inst.shape);
+    this.note(`买入 ${inst.name}（-${res.cost} 金）`);
+    this.resolveFusions();
+    return { ok: true, item: inst };
   }
 
   sell(uid) {
-    const entry = this.board.get(uid);
-    if (!entry) return { ok: false };
-    const price = Math.max(1, Math.floor(entry.item.price / 2));
+    const e = this.board.get(uid);
+    if (!e) return { ok: false };
+    const ratio = this.classDef.passive.effect.sellRatio || ECON.sellRatio;
+    const price = Math.max(1, Math.floor(e.item.price * ratio));
     this.board.remove(uid);
     this.header.gold += price;
-    this.note(`卖出 ${entry.item.name}（+${price} 金）`);
+    this.note(`卖出 ${e.item.name}（+${price} 金）`);
     return { ok: true, price };
   }
 
-  move(uid, x, y, shape) {
-    const entry = this.board.get(uid);
-    if (!entry) return false;
-    const ok = this.board.place(entry.item, x, y, shape || entry.shape);
-    if (ok) this.resolveFusions();
-    return ok;
+  refreshShop() {
+    const cost = this.refreshCost();
+    if (this.header.gold < cost) return { ok: false, reason: '金币不够' };
+    this.header.gold -= cost;
+    this.shop.refresh(true);
+    if (cost > 0) this.note(`刷新商店（-${cost} 金）`);
+    return { ok: true };
   }
 
-  rotate(uid) {
-    const entry = this.board.get(uid);
-    if (!entry) return false;
-    const rotated = rotateShapeLocal(entry.shape);
-    // 原地优先，再找最近可放位置
-    if (this.board.canPlace(rotated, entry.x, entry.y, uid)) {
-      this.board.place(entry.item, entry.x, entry.y, rotated);
-      this.resolveFusions();
-      return true;
-    }
-    // 尝试向右下微调
-    for (let d = 1; d <= 3; d++) {
-      for (const [dx, dy] of [[d, 0], [0, d], [-d, 0], [0, -d]]) {
-        const nx = entry.x + dx, ny = entry.y + dy;
-        if (this.board.canPlace(rotated, nx, ny, uid)) {
-          this.board.place(entry.item, nx, ny, rotated);
-          this.resolveFusions();
-          return true;
+  upgradeShop() {
+    const cap = this.bonus.maxShopLevel || ECON.maxShopLevel;
+    if (this.shop.level >= cap) return { ok: false, reason: '商店已经满级' };
+    const cost = ECON.levelUpCost + (this.shop.level - 1) * 6;
+    if (this.header.gold < cost) return { ok: false, reason: `需要 ${cost} 金` };
+    this.header.gold -= cost;
+    this.shop.maxLevel = cap;
+    this.shop.setLevel(this.shop.level + 1);
+    this.note(`商店升到 ${this.shop.level} 级（-${cost} 金）`);
+    return { ok: true };
+  }
+
+  // ---------- 整理 ----------
+
+  moveTo(uid, x, y) {
+    const e = this.board.get(uid);
+    if (!e) return { ok: false, reason: '道具不存在' };
+    if (!this.board.canPlace(e.shape, x, y, uid)) return { ok: false, reason: '这里放不下' };
+    this.board.place(e.item, x, y, e.shape);
+    this.resolveFusions();
+    return { ok: true };
+  }
+
+  rotate(uid, dir = 1) {
+    if (!this.board.rotateAt(uid, dir)) return { ok: false, reason: '转过来放不下' };
+    this.resolveFusions();
+    return { ok: true };
+  }
+
+  /** 自动整理：同类聚拢 + 尽量贴左上。给玩家一个一键方案，但不如手工精算。 */
+  autoArrange() {
+    const entries = this.board.list().slice();
+    const catOrder = { weapon: 0, gem: 1, trinket: 2, armor: 3, food: 4 };
+    entries.sort((a, b) => {
+      const ca = catOrder[a.item.cat] ?? 9;
+      const cb = catOrder[b.item.cat] ?? 9;
+      if (ca !== cb) return ca - cb;
+      return b.item.tier - a.item.tier;
+    });
+    const snap = entries.map((e) => ({ item: e.item, shape: e.shape }));
+    this.board.clear();
+    let placed = 0;
+    for (const s of snap) {
+      const spot = this.board.findFreeSpot(s.shape);
+      if (spot) {
+        this.board.place(s.item, spot.x, spot.y, s.shape);
+        placed++;
+      } else {
+        // 放不下就换个朝向再试
+        const rotated = normalize(require_rotate(s.shape));
+        const spot2 = this.board.findFreeSpot(rotated);
+        if (spot2) {
+          this.board.place(s.item, spot2.x, spot2.y, rotated);
+          placed++;
         }
       }
     }
-    this.note(`${entry.item.name} 旋转后放不下。`);
-    return false;
+    // 保险：没能放回去的退成金币
+    const placedUids = new Set(this.board.list().map((e) => e.item.uid));
+    for (const s of snap) {
+      if (!placedUids.has(s.item.uid)) {
+        this.board.remove(s.item.uid);
+        this.header.gold += Math.max(1, Math.floor(s.item.price * 0.5));
+      }
+    }
+    this.note(`自动整理完成，放回 ${placed} 件`);
+    return { ok: true, placed };
   }
 
-  /** 两件同名同阶相邻即可合成，自动结算 */
+  /** 两件同名同阶相邻即合成；支持连锁 */
   resolveFusions() {
-    let fusedAny = true;
     const results = [];
-    while (fusedAny) {
-      fusedAny = false;
-      const entries = this.board.list();
-      for (const e of entries) {
-        for (const otherUid of this.board.neighbors(e.item.uid)) {
-          const other = this.board.get(otherUid);
-          if (!other) continue;
-          const outId = RECIPE_MAP[`${e.item.id}+${other.item.id}`];
-          if (!outId) continue;
-          const out = ITEM_BY_ID[outId];
-          const base = e.item;
-          this.board.remove(e.item.uid);
-          this.board.remove(other.item.uid);
-          const fused = { ...out, uid: nextUid() };
-          const spot = this.board.findFreeSpot(fused.shape);
-          if (spot) {
-            this.board.place(fused, spot.x, spot.y, fused.shape);
-            this.note(`合成成功：${base.name} × 2 → ${fused.name}`);
-            results.push(fused);
-          } else {
-            // 放不下就退回两件原物
-            const s1 = this.board.findFreeSpot(base.shape);
-            if (s1) this.board.place({ ...base }, s1.x, s1.y, base.shape);
-            const s2 = this.board.findFreeSpot(base.shape);
-            if (s2) this.board.place({ ...base, uid: nextUid() }, s2.x, s2.y, base.shape);
-            this.note(`合成 ${fused.name} 失败：放不下，配方保留。`);
-          }
-          fusedAny = true;
-          break;
+    const hpPerFuse = this.bonus.hpPerFuse || 0;
+    let again = true;
+    let guard = 0;
+    while (again && guard++ < 40) {
+      again = false;
+      for (const e of this.board.list()) {
+        const outId = RECIPE_MAP[`${e.item.id}+${e.item.id}`];
+        if (!outId) continue;
+        const partnerUid = [...this.board.neighbors(e.item.uid)].find((u) => {
+          const o = this.board.get(u);
+          return o && o.item.id === e.item.id;
+        });
+        if (!partnerUid) continue;
+        const partner = this.board.get(partnerUid);
+        const outItem = ITEM_BY_ID[outId];
+        const keptShape = e.shape;
+        this.board.remove(e.item.uid);
+        this.board.remove(partner.item.uid);
+        const inst = { ...outItem, uid: nextUid() };
+        let spot = this.board.findFreeSpot(inst.shape);
+        if (!spot) {
+          const rot = normalize(require_rotate(inst.shape));
+          spot = this.board.findFreeSpot(rot);
+          if (spot) this.board.place(inst, spot.x, spot.y, rot);
+        } else {
+          this.board.place(inst, spot.x, spot.y, inst.shape);
         }
-        if (fusedAny) break;
+        if (!this.board.has(inst.uid)) {
+          // 放不下就还原，不让玩家吃亏
+          const s1 = this.board.findFreeSpot(e.shape);
+          if (s1) this.board.place({ ...e.item }, s1.x, s1.y, keptShape);
+          const s2 = this.board.findFreeSpot(partner.shape);
+          if (s2) this.board.place({ ...partner.item, uid: nextUid() }, s2.x, s2.y, partner.shape);
+          this.note(`合成 ${outItem.name} 失败：没地方放，配方保留`);
+        } else {
+          this.header.fuses++;
+          if (hpPerFuse > 0) {
+            this.header.hp += hpPerFuse;
+            this.note(`合成 ${outItem.name}，驯兽师被动：最大生命 +${hpPerFuse}`);
+          } else {
+            this.note(`合成 ${outId === outItem.id ? '' : ''}${outItem.name}`);
+          }
+          results.push(outItem);
+        }
+        again = true;
+        break;
       }
     }
     return results;
   }
 
-  refreshShop() {
-    if (this.header.gold < ECON.refreshCost) return { ok: false, reason: '金币不足' };
-    this.header.gold -= ECON.refreshCost;
-    this.shop.refresh();
-    this.note(`刷新商店（-${ECON.refreshCost} 金）`);
-    return { ok: true };
-  }
-
-  upgradeShop() {
-    if (this.shop.level >= ECON.maxShopLevel) return { ok: false, reason: '商店已满级' };
-    const cost = ECON.levelUpCost + (this.shop.level - 1) * 6;
-    if (this.header.gold < cost) return { ok: false, reason: `需要 ${cost} 金` };
-    this.header.gold -= cost;
-    this.shop.setLevel(this.shop.level + 1);
-    this.note(`商店升级到 ${this.shop.level} 级（-${cost} 金）`);
-    return { ok: true };
-  }
-
   // ---------- 战斗 ----------
 
   startBattle() {
-    if (!this.board.list().length) {
-      this.note('背包是空的，先买点东西再打。');
-      return { ok: false, reason: '背包为空' };
-    }
+    if (!this.board.count()) return { ok: false, reason: '背包是空的，先买点东西' };
+    const hasWeapon = this.board.list().some((e) => e.item.cat === 'weapon');
+    if (!hasWeapon) return { ok: false, reason: '至少要有一件武器才能开打' };
     this.phase = PHASE.BATTLE;
     return { ok: true };
   }
 
-  /** 执行本回合战斗（同步，UI 再按日志做动画） */
   runBattle() {
     const round = this.header.round;
     const opp = makeOpponent(round, this.seed + round * 37);
-    const mine = buildUnit(this.board, { name: '你', hp: this.header.hp, seed: this.seed + round });
+    const mine = buildUnit(this.board, {
+      name: '你',
+      hp: this.header.hp,
+      classDef: this.classDef,
+      branch: this.branch,
+      seed: this.seed + round,
+    });
     const foe = buildUnit(opp.board, { name: opp.name, hp: opp.hp, seed: this.seed + round + 1 });
     const result = simulate(mine, foe, { seed: this.seed + round * 101 });
 
@@ -185,50 +273,102 @@ export class Run {
     if (win) { this.header.wins++; this.header.streak = Math.max(0, this.header.streak) + 1; this.header.gold += ECON.winGold; }
     else if (!draw) { this.header.losses++; this.header.streak = 0; }
 
+    const gainPerRound = (mine.goldPerRound || 0);
+    if (gainPerRound) this.header.gold += gainPerRound;
+
     this.lastResult = {
-      round, oppName: opp.name, ...result, dmgTaken: win ? 0 : dmg,
-      myPower: unitPower(mine), foePower: unitPower(foe),
-      // 把对手构筑带出来，结算面板要能让玩家看清输在哪
-      oppItems: opp.board.list().map((e) => ({ id: e.item.id, name: e.item.name, cat: e.item.cat, tier: e.item.tier })),
-      myItems: this.board.list().map((e) => ({ id: e.item.id, name: e.item.name, cat: e.item.cat, tier: e.item.tier })),
+      round,
+      oppName: opp.name,
+      winner: result.winner,
+      duration: result.duration,
+      hpA: result.hpA, hpB: result.hpB,
+      dmgTaken: win ? 0 : dmg,
+      myPower: unitPower(mine),
+      foePower: unitPower(foe),
+      events: result.events,
+      synergies: mine.synergies || [],
+      foeSynergies: foe.synergies || [],
+      logLines: result.events.map((e) => ({ t: e.t, text: eventText(e, { A: '你', B: opp.name }), type: e.type })),
+      myBuild: this.board.list().map((e) => ({ id: e.item.id, name: e.item.name, cat: e.item.cat, tier: e.item.tier, x: e.x, y: e.y, shape: e.shape })),
+      foeBuild: opp.board.list().map((e) => ({ id: e.item.id, name: e.item.name, cat: e.item.cat, tier: e.item.tier, x: e.x, y: e.y, shape: e.shape })),
+      orderMine: mine.order,
+      orderFoe: foe.order,
+      stats: result.stats,
+      hasWeapon: mine.weapons.length > 0,
     };
+
     this.history.push(this.lastResult);
     this.phase = PHASE.RESULT;
-    this.note(`第 ${round} 回合：${win ? '胜' : draw ? '平' : `负，掉 ${dmg} 血`}`);
+    this.note(`第 ${round} 回合：${win ? '胜利' : draw ? '平局' : `失败，掉 ${dmg} 血`}`);
     return this.lastResult;
   }
 
+  // ---------- 子职业 ----------
+
+  availableBranches() {
+    if (this.branch) return [];
+    if (this.header.round < MATCH.branchRound) return [];
+    return this.classDef.branches;
+  }
+
+  chooseBranch(branchId) {
+    const b = branchOf(this.classDef.id, branchId);
+    if (!b) return { ok: false, reason: '没有这个分支' };
+    this.branch = b;
+    this.header.branchName = b.name;
+    this.note(`选择分支：${b.name} —— ${b.desc}`);
+    // 分支解锁的专属道具直接进商店池（下回合刷新可见）
+    if (b.unlockItems?.length) {
+      this.shop.refresh(false);
+    }
+    return { ok: true, branch: b };
+  }
+
+  // ---------- 回合推进 ----------
+
   nextRound() {
-    const p = MATCH;
-    if (this.header.hp <= 0) { this.phase = PHASE.OVER; return { over: true, reason: '血量归零，被淘汰。' }; }
-    if (this.header.wins >= p.winTarget) { this.phase = PHASE.OVER; return { over: true, reason: `拿下 ${p.winTarget} 胜，吃鸡！` }; }
-    if (this.header.round >= p.maxRounds) { this.phase = PHASE.OVER; return { over: true, reason: `打满 ${p.maxRounds} 回合，按胜场结算。` }; }
+    if (this.header.hp <= 0) { this.phase = PHASE.OVER; return { over: true, reason: '生命归零，被淘汰。' }; }
+    if (this.header.wins >= MATCH.winTarget) { this.phase = PHASE.OVER; return { over: true, reason: `拿下 ${MATCH.winTarget} 胜，登顶！` }; }
+    if (this.header.round >= MATCH.maxRounds) { this.phase = PHASE.OVER; return { over: true, reason: `打满 ${MATCH.maxRounds} 回合，按胜场结算。` }; }
 
     this.header.round++;
-    const gain = ECON.baseRoundGold + this.header.round * ECON.roundGoldStep + (this.header.streak >= 2 ? 2 : 0);
+    const extra = this.bonus.extraGold || 0;
+    const gain = ECON.baseRoundGold + this.header.round * ECON.roundGoldStep + (this.header.streak >= 2 ? 2 : 0) + extra;
     this.header.gold += gain;
-    this.shop.refresh();
+    this.shop.refresh(true);
     this.phase = PHASE.PREPARE;
-    this.note(`第 ${this.header.round} 回合开始，获得 ${gain} 金。`);
+    this.note(`第 ${this.header.round} 回合开始，收入 ${gain} 金`);
+
+    const branches = this.availableBranches();
+    if (branches.length) {
+      this.pendingBranch = true;
+      this.note('可以选子职业了，选一个方向再继续。');
+      return { over: false, gain, offerBranch: true, branches };
+    }
     return { over: false, gain };
   }
 
-  /** 结算用总评 */
   finalScore() {
-    return Math.max(0, this.header.wins * 10 - this.header.losses * 3 + (this.header.hp > 0 ? 20 : 0));
+    return Math.max(0, this.header.wins * 10 - this.header.losses * 3 + (this.header.hp > 0 ? 20 : 0) + this.header.fuses * 2);
+  }
+
+  /** 玩家可读的构筑摘要 */
+  buildSummary() {
+    return this.board.list()
+      .sort((a, b) => (a.y - b.y) || (a.x - b.x))
+      .map((e) => `${e.item.name}(T${e.item.tier})`);
   }
 }
 
-function rotateShapeLocal(shape) {
+function require_rotate(shape) {
+  // 避免循环依赖：这里直接用 shapes 的 rotateCW
   const rows = shape.length;
   const cols = Math.max(...shape.map((r) => r.length));
   const out = Array.from({ length: cols }, () => Array(rows).fill('.'));
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
-      out[x][rows - 1 - y] = shape[y][x] || '.';
+      out[x][rows - 1 - y] = shape[y]?.[x] === 'X' ? 'X' : '.';
     }
   }
   return out.map((r) => r.join(''));
 }
-
-export { shapeCells };

@@ -1,69 +1,51 @@
 /**
- * 背包网格：占位、合法性、上下架、相邻关系。
- * 纯逻辑，不碰 DOM。
+ * 背包网格（v0.2）
+ *
+ * 这一层是「整理玩法」的地基，只做四件事：
+ *   1. 用不规则形状判定能不能放
+ *   2. 支持拿起、放下、旋转、换位
+ *   3. 给出相邻关系（宝石光环、同类协同都靠它）
+ *   4. 给出触发顺序（从上到下、从左到右），位置本身就是策略
+ *
+ * 不碰 DOM，可在 node 里裸跑测试。
  */
 
-/**
- * 把一个道具的 shape 展开成相对坐标集合。
- * @param {string[]} shape
- * @returns {{x:number,y:number}[]}
- */
-export function shapeCells(shape) {
-  const cells = [];
-  shape.forEach((row, y) => {
-    [...row].forEach((ch, x) => {
-      if (ch === 'X') cells.push({ x, y });
-    });
-  });
-  return cells;
-}
+import { cells, area, size, rotateCW, normalize, orientations, debugDraw } from '../data/shapes.js';
 
-export function shapeSize(shape) {
-  const w = Math.max(...shape.map((r) => r.length));
-  const h = shape.length;
-  return { w, h };
-}
-
-/** 顺时针旋转 90 度 */
-export function rotateShape(shape) {
-  const { w, h } = shapeSize(shape);
-  const grid = Array.from({ length: h }, () => Array(w).fill('.'));
-  shape.forEach((row, y) => [...row].forEach((ch, x) => { grid[y][x] = ch; }));
-  const out = Array.from({ length: w }, () => Array(h).fill('.'));
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      out[x][h - 1 - y] = grid[y][x];
-    }
-  }
-  return out.map((r) => r.join(''));
-}
+export { cells, area, size, rotateCW, normalize, orientations, debugDraw };
 
 export class Board {
   constructor(cols, rows) {
     this.cols = cols;
     this.rows = rows;
-    /** @type {(null|string)[]} 每格存放 item.uid */
+    /** @type {(string|null)[]} 每格存 item.uid */
     this.cells = new Array(cols * rows).fill(null);
     /** @type {Map<string, {item:object, x:number, y:number, shape:string[]}>} */
     this.items = new Map();
+    this._order = null;   // 触发顺序缓存，任何变更后失效
   }
 
   idx(x, y) { return y * this.cols + x; }
   inBounds(x, y) { return x >= 0 && y >= 0 && x < this.cols && y < this.rows; }
   at(x, y) {
-    if (!this.inBounds(x, y)) return undefined;
+    if (!this.inBounds(x, y)) return null;
     return this.cells[this.idx(x, y)];
   }
 
-  /** 给定道具与落点，返回所有绝对占用格 */
+  /** 形状锚点落在 (x,y) 时的全部绝对占用格 */
   footprint(shape, x, y) {
-    return shapeCells(shape).map((c) => ({ x: x + c.x, y: y + c.y }));
+    return cells(shape).map((c) => ({ x: x + c.x, y: y + c.y }));
   }
 
-  /** 是否可放：边界内 + 目标格为空 + 自重叠允许（移动自身时） */
+  /**
+   * 能否放置。
+   * @param {string[]} shape
+   * @param {number} x 锚点
+   * @param {number} y 锚点
+   * @param {string|null} ignoreUid 移动自身时忽略自己占的格
+   */
   canPlace(shape, x, y, ignoreUid = null) {
-    const cells = this.footprint(shape, x, y);
-    for (const c of cells) {
+    for (const c of this.footprint(shape, x, y)) {
       if (!this.inBounds(c.x, c.y)) return false;
       const occ = this.at(c.x, c.y);
       if (occ && occ !== ignoreUid) return false;
@@ -71,46 +53,91 @@ export class Board {
     return true;
   }
 
-  get(uid) { return this.items.get(uid); }
+  /** 列出所有能放下该形状的锚点，供 UI 提示「可以放哪」 */
+  allPlacements(shape, ignoreUid = null) {
+    const out = [];
+    const { w, h } = size(shape);
+    for (let y = 0; y <= this.rows - h; y++) {
+      for (let x = 0; x <= this.cols - w; x++) {
+        if (this.canPlace(shape, x, y, ignoreUid)) out.push({ x, y });
+      }
+    }
+    return out;
+  }
 
+  findFreeSpot(shape, ignoreUid = null) {
+    return this.allPlacements(shape, ignoreUid)[0] || null;
+  }
+
+  get(uid) { return this.items.get(uid); }
+  has(uid) { return this.items.has(uid); }
   list() { return [...this.items.values()]; }
+  count() { return this.items.size; }
 
   place(item, x, y, shape) {
-    if (!this.canPlace(shape, x, y, item.uid)) return false;
+    const s = normalize(shape);
+    if (!this.canPlace(s, x, y, item.uid)) return false;
     this.remove(item.uid);
-    for (const c of this.footprint(shape, x, y)) {
+    for (const c of this.footprint(s, x, y)) {
       this.cells[this.idx(c.x, c.y)] = item.uid;
     }
-    this.items.set(item.uid, { item, x, y, shape: [...shape] });
+    this.items.set(item.uid, { item, x, y, shape: [...s] });
+    this._order = null;
     return true;
   }
 
   remove(uid) {
-    const entry = this.items.get(uid);
-    if (!entry) return false;
-    for (const c of this.footprint(entry.shape, entry.x, entry.y)) {
+    const e = this.items.get(uid);
+    if (!e) return false;
+    for (const c of this.footprint(e.shape, e.x, e.y)) {
       if (this.at(c.x, c.y) === uid) this.cells[this.idx(c.x, c.y)] = null;
     }
     this.items.delete(uid);
+    this._order = null;
     return true;
   }
 
   clear() {
     this.cells.fill(null);
     this.items.clear();
+    this._order = null;
   }
 
-  /** 返回与指定 uid 正交相邻的其它 uid 集合 */
+  /** 就地旋转；原地放不下就就近找位置。返回是否成功 */
+  rotateAt(uid, dir = 1) {
+    const e = this.items.get(uid);
+    if (!e) return false;
+    let shape = e.shape;
+    for (let i = 0; i < (dir > 0 ? 1 : 3); i++) shape = rotateCW(shape);
+    shape = normalize(shape);
+    if (this.canPlace(shape, e.x, e.y, uid)) {
+      this.place(e.item, e.x, e.y, shape);
+      return true;
+    }
+    // 螺旋就近搜索，让旋转尽量少破坏已有布局
+    for (let r = 1; r <= Math.max(this.cols, this.rows); r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          const nx = e.x + dx;
+          const ny = e.y + dy;
+          if (this.canPlace(shape, nx, ny, uid)) {
+            this.place(e.item, nx, ny, shape);
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  /** 正交四邻的 uid 集合 */
   neighbors(uid) {
-    const entry = this.items.get(uid);
-    if (!entry) return new Set();
+    const e = this.items.get(uid);
+    if (!e) return new Set();
     const out = new Set();
-    for (const c of this.footprint(entry.shape, entry.x, entry.y)) {
-      const probes = [
-        { x: c.x + 1, y: c.y }, { x: c.x - 1, y: c.y },
-        { x: c.x, y: c.y + 1 }, { x: c.x, y: c.y - 1 },
-      ];
-      for (const p of probes) {
+    for (const c of this.footprint(e.shape, e.x, e.y)) {
+      for (const p of [{ x: c.x + 1, y: c.y }, { x: c.x - 1, y: c.y }, { x: c.x, y: c.y + 1 }, { x: c.x, y: c.y - 1 }]) {
         const other = this.at(p.x, p.y);
         if (other && other !== uid) out.add(other);
       }
@@ -118,20 +145,69 @@ export class Board {
     return out;
   }
 
-  /** 找第一个能放下该形状的位置；找不到返回 null */
-  findFreeSpot(shape) {
-    for (let y = 0; y <= this.rows - shape.length; y++) {
-      for (let x = 0; x <= this.cols; x++) {
-        if (this.canPlace(shape, x, y)) return { x, y };
-      }
-    }
-    return null;
+  /** 与背包顶边相连（有些道具要求挂在最上排） */
+  touchesTop(uid) {
+    const e = this.items.get(uid);
+    if (!e) return false;
+    return cells(e.shape).some((c) => e.y + c.y === 0);
   }
 
-  /** 已用格数 */
+  /**
+   * 触发顺序：从上到下、从左到右。
+   * 排序键用道具左上角所在行，再列；这样「谁先出手」由玩家摆放决定。
+   */
+  triggerOrder() {
+    if (this._order) return this._order;
+    const arr = this.list().slice().sort((a, b) => (a.y - b.y) || (a.x - b.x));
+    this._order = arr.map((e) => e.item.uid);
+    return this._order;
+  }
+
+  orderIndex(uid) {
+    return this.triggerOrder().indexOf(uid);
+  }
+
   usedCells() {
     let n = 0;
     for (const v of this.cells) if (v) n++;
     return n;
+  }
+
+  capacity() { return this.cols * this.rows; }
+
+  freeCells() { return this.capacity() - this.usedCells(); }
+
+  /** 导出纯数据，便于存档与测试 */
+  snapshot() {
+    return this.list().map((e) => ({
+      id: e.item.id, uid: e.item.uid, x: e.x, y: e.y, shape: [...e.shape],
+    }));
+  }
+
+  /** 用快照还原（道具实例由外部提供） */
+  restore(snapshot, itemFactory) {
+    this.clear();
+    for (const s of snapshot) {
+      const item = itemFactory(s);
+      if (item) this.place(item, s.x, s.y, s.shape);
+    }
+  }
+
+  /** 文本渲染，调试与测试用 */
+  toText() {
+    const grid = Array.from({ length: this.rows }, () => Array(this.cols).fill('.'));
+    let seq = 0;
+    const seqOf = new Map();
+    for (const uid of this.triggerOrder()) {
+      seqOf.set(uid, seq++);
+    }
+    const glyphs = '0123456789abcdefghijklmnopqrstuvwxyz';
+    for (const e of this.list()) {
+      const g = glyphs[seqOf.get(e.item.uid) % glyphs.length];
+      for (const c of this.footprint(e.shape, e.x, e.y)) {
+        if (this.inBounds(c.x, c.y)) grid[c.y][c.x] = g;
+      }
+    }
+    return grid.map((r) => r.join('')).join('\n');
   }
 }
