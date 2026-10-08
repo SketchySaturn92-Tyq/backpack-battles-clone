@@ -95,28 +95,28 @@ export const ITEMS = [
   },
   {
     id: 'firestaff', name: '火焰法杖', cat: 'weapon', tier: 2, price: 8,
-    shape: ['X', 'X', 'X', 'X'],          // 四格长杖
+    shape: ['X', 'X', 'X'],               // 三格长杖，与立绘比例一致
     stats: { damage: 6, burn: 4, fx: 'burn', magic: true }, chargeMul: 0.9,
     slot: 'weapon',
     desc: '长杖，命中后持续点燃。',
   },
   {
     id: 'axe', name: '战斧', cat: 'weapon', tier: 2, price: 7,
-    shape: ['XX', '.X', '.X'],            // 斧头在左上，斧柄竖下来
+    shape: ['XX.', '.X.', '..X'],          // 斧头在左上，斧柄斜垂，左下留凹角
     stats: { damage: 12, fx: 'heavy' },
     slot: 'weapon',
     desc: '斧头加斧柄，拐角处最好塞。',
   },
   {
     id: 'runeblade', name: '符文剑', cat: 'weapon', tier: 4, price: 21,
-    shape: ['XX', '.X', '.X'],            // 护手 + 剑刃
+    shape: ['XX.', '.X.', 'X..'],          // 护手与剑刃，外接接近方形
     stats: { damage: 18, fx: 'shock', crit: 0.1 },
     slot: 'weapon',
     desc: '带护手的符文剑，命中追加雷击。',
   },
   {
     id: 'bow', name: '短弓', cat: 'weapon', tier: 1, price: 4,
-    shape: ['.X', 'X.', 'X.', '.X'],      // 弓身弯成一道弧
+    shape: ['XX.', '.X.', '..X'],          // 弓背与弓弦，外接接近方形
     stats: { damage: 5, fx: 'arrow', ranged: true }, chargeMul: 0.9,
     slot: 'weapon',
     desc: '弓就该是弯的，这道弧占四格。',
@@ -144,21 +144,21 @@ export const ITEMS = [
   },
   {
     id: 'dualAxe', name: '双持斧', cat: 'weapon', tier: 3, price: 14,
-    shape: ['XX', 'XX', '.X', '.X'],      // 两面斧头叠在一起
+    shape: ['XX.', 'XX.', '.XX'],          // 两面斧头叠着，外接接近方形
     stats: { damage: 14, fx: 'heavy' },
     slot: 'weapon',
     desc: '双斧头，比战斧快一点。',
   },
   {
     id: 'greatsword', name: '巨剑', cat: 'weapon', tier: 4, price: 20,
-    shape: ['XXX', '.X.', '.X.', '.X.'],  // 护手 + 长剑身
+    shape: ['XXX', '.X.', '.XX'],          // 护手与长剑身，左下留空缺
     stats: { damage: 26, fx: 'heavy' },
     slot: 'weapon',
     desc: '六格巨剑，读条最久，一剑最重。',
   },
   {
     id: 'emberStaff', name: '余烬之杖', cat: 'weapon', tier: 3, price: 15,
-    shape: ['XX', '.X', '.X', '.X'],      // 顶端拐出去一节的杖
+    shape: ['XX.', '.X.', '.XX'],          // 杖顶拐出一节，外接接近方形
     stats: { damage: 8, burn: 9, fx: 'burn', magic: true }, chargeMul: 0.9,
     slot: 'weapon', fused: true,
     desc: '杖顶拐出一节，点燃更狠。',
@@ -309,7 +309,7 @@ export const ITEMS = [
   },
   {
     id: 'bloodCharm', name: '血符', cat: 'trinket', tier: 3, price: 12,
-    shape: ['X', 'X'],                    // 垂下来的符牌
+    shape: ['X'],                         // 单格小符牌
     stats: { lifesteal: 0.15 }, slot: 'trigger', desc: '垂挂的符牌，造成伤害的 15% 转为治疗。',
   },
   {
@@ -325,7 +325,7 @@ export const ITEMS = [
   },
   {
     id: 'phoenixFeather', name: '凤凰羽', cat: 'trinket', tier: 4, price: 20,
-    shape: ['X', 'X'],
+    shape: ['X'],
     stats: { regen: 5, maxHp: 18 }, slot: 'trigger', desc: '一片羽毛，只占两格，持续回血很强。',
   },
 ];

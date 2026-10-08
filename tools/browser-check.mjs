@@ -239,9 +239,13 @@ const layoutInfo = await cdp.eval(`
     };
   })()
 `);
-ok('左栏没有虚胖（不超过背包太多）',
-  layoutInfo && layoutInfo.bagW - layoutInfo.boardW < 40,
+// 用户要求背包占六成：左栏必须装得下 9×64 舞台，且明显比商店列宽
+ok('左栏装得下舞台（不窄于舞台）',
+  layoutInfo && layoutInfo.bagW >= layoutInfo.boardW,
   JSON.stringify(layoutInfo));
+ok('背包列占六成左右（背包 : 商店）',
+  layoutInfo && layoutInfo.bagW / (layoutInfo.bagW + layoutInfo.railW) >= 0.55,
+  `背包 ${layoutInfo?.bagW} / 商店 ${layoutInfo?.railW} = ${layoutInfo ? (layoutInfo.bagW / (layoutInfo.bagW + layoutInfo.railW)).toFixed(2) : '?'}`);
 // 背包格子 64px 是硬要求，左栏因此必然不窄，商店够用即可
 ok('商店栏宽度够摆货（>= 380）',
   layoutInfo && layoutInfo.railW >= 380,

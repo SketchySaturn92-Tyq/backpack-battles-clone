@@ -255,20 +255,21 @@ button.start-big {
 .stage-layout {
   flex: 1; min-height: 0;
   display: grid;
-  /* 三列：背包按 9×64 实际需要占位，中间储物箱固定窄栏，剩下的全给商店 */
-  grid-template-columns: minmax(0, auto) 196px minmax(0, 1fr);
+  /* 背包占六成、商店占四成（中间储物箱固定窄栏）；
+     左列下限 606px 保证 9×64 的舞台 + 间隙一定能放下 */
+  grid-template-columns: minmax(606px, 6fr) 196px minmax(0, 4fr);
   gap: 9px;
 }
 
 .col-bag {
   display: flex; flex-direction: column; gap: 9px;
   min-height: 0; min-width: 0;
-  /* 上限压在背包能用到的宽度，避免左栏虚胖 */
-  max-width: 434px;
+  /* 不再限制宽度：左列由 6fr 决定，保证 9×64 的舞台能完整放下 */
+  max-width: none;
 }
 .col-rail { display: flex; flex-direction: column; gap: 9px; min-height: 0; min-width: 0; }
 
-.bag-panel { flex: 1; min-height: 0; }
+.bag-panel { flex: 1; min-height: 0; padding: 8px 9px; }
 .shop-panel { flex: 1; min-height: 0; overflow: hidden; }
 .log-panel { flex: 0 0 auto; }
 
