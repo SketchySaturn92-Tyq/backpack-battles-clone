@@ -20,6 +20,10 @@ const OUT = join(ROOT, 'art', 'verify');
 const CHROME = process.env.CHROME_PATH
   || join(process.env.HOME, '.cache/ms-playwright/chromium-1243/chrome-linux64/chrome');
 
+// 传 REMOTE_URL 时直接在远端地址上验收（例如发布到 Artifact 之后），
+// 不启本地静态服务；只在本地跑时才用内置服务器。
+const REMOTE_URL = process.env.REMOTE_URL || '';
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -44,8 +48,13 @@ const server = createServer(async (req, res) => {
 });
 
 await mkdir(OUT, { recursive: true });
-await new Promise((r) => server.listen(PORT, r));
-console.log(`静态服务已起：http://localhost:${PORT}`);
+const PAGE_URL = REMOTE_URL || `http://localhost:${PORT}/`;
+if (REMOTE_URL) {
+  console.log(`远端验收模式：${REMOTE_URL}`);
+} else {
+  await new Promise((r) => server.listen(PORT, r));
+  console.log(`静态服务已起：http://localhost:${PORT}`);
+}
 
 const profileDir = join(OUT, 'chrome-profile');
 await rm(profileDir, { recursive: true, force: true });   // 每次干净启动，避免会话恢复干扰
@@ -125,7 +134,9 @@ const version = await waitForDevtools();
 console.log(`Chrome: ${version.Browser}`);
 
 const targets = await fetchJson('/json/list');
-const page = targets.find((t) => t.type === 'page' && t.url.includes(`:${PORT}`));
+const pageTarget = targets.find((t) => t.type === 'page' && t.url.startsWith('about:blank'))
+  || targets.find((t) => t.type === 'page');
+const page = pageTarget;
 if (!page) { console.error('没找到页面 target:', targets.map((t) => t.url)); process.exit(1); }
 
 const cdp = await CDP.connect(page.webSocketDebuggerUrl);
@@ -134,8 +145,8 @@ await cdp.send('Page.enable');
 await cdp.send('Log.enable');
 
 // 干净启动是空白页，显式导航到游戏
-await cdp.send('Page.navigate', { url: `http://localhost:${PORT}/` });
-await sleep(1200);
+await cdp.send('Page.navigate', { url: PAGE_URL });
+await sleep(1500);
 
 const errors = [];
 const consoleMsgs = [];
