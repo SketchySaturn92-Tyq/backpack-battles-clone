@@ -8,6 +8,7 @@
  */
 
 import { synergyBonus } from '../data/synergies.js';
+import { chargeSeconds } from '../data/items.js';
 
 /**
  * 一件道具的最终属性：自身 + 相邻道具给的 aura。
@@ -31,13 +32,13 @@ export function itemEffectiveStats(board, uid) {
   return { item: e.item, stats, sources };
 }
 
-/** 每秒伤害：只有武器有这个概念 */
-export function dpsOf(item, stats) {
+/** 每秒伤害：只有武器有这个概念。读条由占格数决定，见 chargeSeconds */
+export function dpsOf(item, stats, chargeMul = null) {
   if (item.cat !== 'weapon') return null;
   const d = stats.damage || 0;
-  const cd = stats.cooldown || 0;
-  if (!d || !cd) return null;
-  return d / cd;
+  const charge = chargeMul != null ? chargeMul : chargeSeconds(item);
+  if (!d || !charge) return null;
+  return d / charge;
 }
 
 /** 折算护甲后的实际每秒伤害，默认按 20 护甲的假想目标估 */

@@ -8,7 +8,7 @@
  */
 
 import { cells, size } from '../data/shapes.js';
-import { CATEGORIES, RARITY } from '../data/items.js';
+import { CATEGORIES, RARITY, chargeSeconds } from '../data/items.js';
 import { BOARD, SHOP_QUALITY } from '../data/constants.js';
 import { itemEffectiveStats, dpsOf, armoredDps } from '../core/analyze.js';
 import { upgradeOf, chainOf } from '../data/recipes.js';
@@ -20,7 +20,7 @@ let CELL = BOARD.cell;
 let STEP = CELL + GAP;
 
 export function setCellSize(px) {
-  const next = Math.max(24, Math.min(76, Math.round(px)));
+  const next = Math.max(26, Math.min(104, Math.round(px)));
   if (next === CELL) return false;
   CELL = next;
   STEP = CELL + GAP;
@@ -44,6 +44,8 @@ export function renderBoard(root, board, opts = {}) {
   root.innerHTML = '';
   root.style.gridTemplateColumns = `repeat(${board.cols}, ${CELL}px)`;
   root.style.gridTemplateRows = `repeat(${board.rows}, ${CELL}px)`;
+  root.style.gap = `${GAP}px`;
+  root.style.padding = `${PAD}px`;
   root.style.width = `${board.cols * STEP - GAP + PAD * 2}px`;
   root.style.height = `${board.rows * STEP - GAP + PAD * 2}px`;
 
@@ -169,9 +171,10 @@ export function renderShop(root, shop, gold, { onBuy, onLock }) {
     const afford = gold >= slot.item.price;
 
     const d = slot.item.stats?.damage;
-    const cd = slot.item.stats?.cooldown;
-    const dps = d && cd ? d / cd : null;
+    const charge = slot.item.cat === 'weapon' ? chargeSeconds(slot.item) : 0;
+    const dps = d && charge ? d / charge : null;
     const dpsLine = dps ? `<span class="dps">${dps.toFixed(1)}/秒</span>` : '';
+    const chargeLine = charge ? `<span class="chg">读条 ${charge.toFixed(1)}s</span>` : '';
 
     el.innerHTML = `
       <div class="sc-top">
@@ -182,7 +185,7 @@ export function renderShop(root, shop, gold, { onBuy, onLock }) {
       <img class="ico" src="${iconFor(slot.item)}" alt="" onerror="this.style.display='none'">
       <div class="nm">${slot.item.name}</div>
       <div class="cat">${catName(slot.item.cat)} · ${cells(slot.item.shape).length}格</div>
-      ${dpsLine}
+      ${dpsLine}${chargeLine}
       <div class="pr" style="${afford ? '' : 'color:#e2604a'}">${slot.item.price} 金</div>`;
     el.addEventListener('click', (ev) => {
       if (ev.shiftKey || ev.altKey) { onLock(i); return; }
@@ -394,9 +397,9 @@ export function upgradePopupHtml(entry, board) {
 
 function statName(k) {
   return {
-    damage: '伤害', cooldown: '攻击间隔', armor: '护甲', heal: '治疗量',
+    damage: '伤害', cooldown: '读条时长', armor: '护甲', heal: '治疗量',
     healCooldown: '治疗间隔', regen: '每秒回复', maxHp: '最大生命',
-    crit: '暴击率', critMult: '暴击倍率', speed: '攻速加成', globalSpeed: '全局攻速',
+    crit: '暴击率', critMult: '暴击倍率', speed: '读条提速', globalSpeed: '全局读条提速',
     thorns: '反伤', aura: '相邻光环', burn: '点燃', pierce: '穿透',
     armorBreak: '破甲', poison: '中毒', frost: '冰霜', lifesteal: '吸血',
     poisonAura: '相邻附毒', goldPerRound: '每回合金币', ranged: '远程',

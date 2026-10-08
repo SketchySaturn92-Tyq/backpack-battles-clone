@@ -77,14 +77,14 @@ section('摆放与整理');
   ok('横剑在 1 格宽处放不下', !b.canPlace(horiz, 0, 0));
   ok('横剑在空格处可以放', b.canPlace(horiz, 2, 0));
 
-  // L 形：验证凹角真的能塞东西
+  // 凹角：验证斧头下面的空缺真能再塞东西
   const b2 = new Board(4, 4);
-  const axe = { ...ITEM_BY_ID.axe, uid: 'a1' };   // ['XX','X.','X.']
-  ok('战斧 L 形占 4 格', cells(axe.shape).length === 4, JSON.stringify(axe.shape));
+  const axe = { ...ITEM_BY_ID.axe, uid: 'a1' };   // ['XX','.X','.X']：斧头在左上，柄竖在右侧
+  ok('战斧占 4 格', cells(axe.shape).length === 4, JSON.stringify(axe.shape));
   ok('战斧放置成功', b2.place(axe, 0, 0, axe.shape));
-  ok('L 形凹角是空的', b2.at(1, 1) === null && b2.at(1, 2) === null);
-  const dagger = { ...ITEM_BY_ID.dagger, uid: 'd1' };  // 1×2
-  ok('凹角（1 宽 2 高）刚好塞下匕首', b2.place(dagger, 1, 1, dagger.shape), '凹角尺寸与匕首匹配');
+  ok('斧头下方的空缺是空的', b2.at(0, 1) === null && b2.at(0, 2) === null);
+  const dagger = { ...ITEM_BY_ID.dagger, uid: 'd1' };  // 1×2 竖条
+  ok('空缺刚好塞下匕首', b2.place(dagger, 0, 1, dagger.shape), '空缺 1 宽 2 高，与匕首同尺寸');
   ok('塞入后占满 6 格', b2.usedCells() === 6, `${b2.usedCells()}`);
   const bread = { ...ITEM_BY_ID.bread, uid: 'f1' };    // 1×1
   ok('再塞 1 格小道具就没位置了', !b2.canPlace(bread.shape, 1, 1) || b2.freeCells() >= 1);
@@ -120,6 +120,44 @@ section('摆放与整理');
   // 全部朝向都能放的场景
   const many = b4.allPlacements(shapeOf('bread'));
   ok('列出所有可放位置', many.length > 10, `${many.length} 个`);
+}
+
+// ============ 2b. 读条：由占格数决定 ============
+section('读条');
+{
+  const { chargeSeconds, CHARGE_PER_CELL } = await import('../src/js/data/items.js');
+
+  const dagger = ITEM_BY_ID.dagger;
+  const great = ITEM_BY_ID.greatsword;
+  const cd = chargeSeconds(dagger);
+  const cg = chargeSeconds(great);
+  ok('读条按占格数算', Math.abs(chargeSeconds(ITEM_BY_ID.sword) - 3 * CHARGE_PER_CELL) < 1e-6,
+    `长剑 ${chargeSeconds(ITEM_BY_ID.sword)}s`);
+  ok('匕首读条比巨剑快', cd < cg, `${cd}s vs ${cg}s`);
+  ok('巨剑读条 = 6 格 × 每格秒数', Math.abs(cg - 6 * CHARGE_PER_CELL) < 1e-6, `${cg}s`);
+  ok('读条不吃 cooldown 字段（已移除）', ITEM_BY_ID.sword.stats.cooldown === undefined);
+
+  // 同一段时间里，读条快的挥得更多
+  const mk = (id) => {
+    const b = new Board(4, 6);
+    const it = { ...ITEM_BY_ID[id], uid: 'w-' + id };
+    b.place(it, 0, 0, it.shape);
+    return buildUnit(b, { name: id, hp: 400, seed: 3 });
+  };
+  const fast = mk('dagger');
+  const slow = mk('greatsword');
+  const tank = buildUnit(new Board(4, 4), { name: '木桩', hp: 100000, seed: 9 });
+  const simFast = simulate(fast, tank, { seed: 11 });
+  const simSlow = simulate(slow, tank, { seed: 11 });
+  const hits = (s, name) => s.events.filter((e) => e.type === 'attack' && e.weaponName === name).length;
+  const hf = hits(simFast, '匕首');
+  const hs = hits(simSlow, '巨剑');
+  ok('同样时长内匕首出手更多', hf > hs, `匕首 ${hf} 次 vs 巨剑 ${hs} 次`);
+  ok('读条写进了武器数据', Math.abs(fast.weapons[0].charge - cd) < 1e-6, `${fast.weapons[0].charge}`);
+
+  // 攻击事件要带上武器 uid，战斗舞台靠它重置读条
+  const atk = simFast.events.find((e) => e.type === 'attack');
+  ok('攻击事件带武器 uid', !!atk.weaponUid, JSON.stringify(atk).slice(0, 80));
 }
 
 // ============ 3. 触发顺序 ============

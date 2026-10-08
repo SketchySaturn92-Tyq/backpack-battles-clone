@@ -445,45 +445,84 @@ if (hasSellBtn) {
 }
 await cdp.shot('03-出售与总览.png');
 
-// ============ 5. 完整一局（回归） ============
-console.log('\n— 完整一局回归');
-const finished = await cdp.eval(`
+// ============ 5. 战斗读条（回归） ============
+// 只打一场，重点验证：每件武器有自己的读条、读条会走、跳过能收口。
+// 不跑满整局 —— 整局流程已经由 tools/test-core.mjs 在 node 里跑过 146 项。
+console.log('\n— 战斗读条');
+const battleProbe = await cdp.eval(`
   (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
-    for (let i = 0; i < 520; i++) {
-      const overlay = document.getElementById('overlay');
-      if (!overlay.classList.contains('hidden')) {
-        if (document.getElementById('ov-again')) return 'over:' + document.getElementById('overlay-body').innerText.slice(0, 60);
-        const branch = document.querySelector('.class-card[data-branch]');
-        if (branch) { branch.click(); await sleep(120); continue; }
-        const okb = document.getElementById('ov-ok');
-        if (okb) { okb.click(); await sleep(120); continue; }
-        const st = document.getElementById('ov-start');
-        if (st) { st.click(); await sleep(120); continue; }
-        const cl = document.querySelector('.class-card[data-class]');
-        if (cl) { cl.click(); await sleep(150); continue; }
-      }
-      const btn = document.getElementById('btn-battle');
-      // 战斗在二级页面演出，直接点「跳过」加速回归
-      const battlePage = !document.getElementById('page-battle').classList.contains('hidden');
-      if (battlePage) {
-        const skip = document.getElementById('skip-btn');
-        if (skip) skip.click();
-        await sleep(150);
-        continue;
-      }
-      if (btn && !btn.disabled) {
-        const cards = [...document.querySelectorAll('#shop .shop-card')];
-        for (const c of cards) { if (!c.classList.contains('sold')) c.click(); }
-        await sleep(60);
-        btn.click();
-        await sleep(300);
-      } else await sleep(150);
+    // 先把界面推回准备阶段：关掉任何弹窗
+    for (let i = 0; i < 20; i++) {
+      const ov = document.getElementById('overlay');
+      if (ov.classList.contains('hidden')) break;
+      const cl = document.querySelector('.class-card[data-class]');
+      if (cl) { cl.click(); await sleep(150); continue; }
+      const okb = document.getElementById('ov-ok');
+      if (okb) { okb.click(); await sleep(120); continue; }
+      const st = document.getElementById('ov-start');
+      if (st) { st.click(); await sleep(120); continue; }
+      break;
     }
-    return 'timeout';
+    // 前面几步可能把武器卖掉了；这里先确保背包里有一件武器（没有武器不能开战）
+    let bought = false;
+    for (let i = 0; i < 18; i++) {
+      if (document.querySelector('#board .shape-item.cat-weapon')) { bought = true; break; }
+      const weaponCard = [...document.querySelectorAll('#shop .shop-card')]
+        .find((c) => !c.classList.contains('sold') && c.querySelector('.dps'));
+      if (weaponCard) { weaponCard.click(); await sleep(120); continue; }
+      const rf = document.getElementById('btn-refresh');
+      if (rf && !rf.disabled) { rf.click(); await sleep(120); continue; }
+      break;
+    }
+    // 开战
+    const btn = document.getElementById('btn-battle');
+    if (btn && !btn.disabled) { btn.click(); await sleep(300); }
+    // 买不起武器时至少确认按钮如实给出拒绝理由
+    const blockedReason = document.getElementById('toast')?.innerText || '';
+
+    const onBattle = !document.getElementById('page-battle').classList.contains('hidden');
+    const bars = [...document.querySelectorAll('.wbar .wb-track i')];
+    const widths1 = bars.map(b => b.style.width);
+    const transitions = bars.map(b => b.style.transition);
+    await sleep(700);
+    const widths2 = bars.map(b => b.style.width);
+    return {
+      onBattle,
+      hasWeapon: bought,
+      blockedReason,
+      barCount: bars.length,
+      widths1, widths2, transitions,
+      hasWeaponNames: document.querySelectorAll('.wbar .wb-name').length,
+    };
   })()
-`, true, 170000);
-ok('能自动跑到本局结束', String(finished).startsWith('over:'), String(finished).slice(0, 80));
+`, true, 90000);
+
+ok('能进入战斗页', battleProbe.onBattle, JSON.stringify(battleProbe).slice(0, 120));
+ok('每件武器都有读条', battleProbe.barCount >= 1, `${battleProbe.barCount} 条`);
+ok('读条带武器名', battleProbe.hasWeaponNames >= 1, `${battleProbe.hasWeaponNames}`);
+ok('读条在走（宽度会变化或已走满）',
+  battleProbe.widths1.some((w, i) => w !== battleProbe.widths2[i]) || battleProbe.widths2.some((w) => w === '100%'),
+  `第一次 ${JSON.stringify(battleProbe.widths1)} → 第二次 ${JSON.stringify(battleProbe.widths2)}`);
+ok('读条带过渡时长（按格数算的秒数）',
+  battleProbe.transitions.some((t) => /width [\d.]+s/.test(t || '')),
+  JSON.stringify(battleProbe.transitions).slice(0, 120));
+
+// 跳过要能收口到结算弹窗
+const skipResult = await cdp.eval(`
+  (async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const skip = document.getElementById('skip-btn');
+    if (skip) skip.click();
+    await sleep(500);
+    const ov = document.getElementById('overlay');
+    return {
+      overlayShown: !ov.classList.contains('hidden'),
+      text: document.getElementById('overlay-body').innerText.slice(0, 50),
+    };
+  })()
+`, true, 40000);
+ok('点跳过能收到结算弹窗', skipResult.overlayShown, JSON.stringify(skipResult).slice(0, 120));
 await cdp.shot('04-结算.png');
 
 // ============ 6. 健康度 ============

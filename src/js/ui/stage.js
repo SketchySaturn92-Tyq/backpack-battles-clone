@@ -80,17 +80,55 @@ export class BattleStage {
     this.meta = meta;
     this.playing = true;
     this.index = 0;
+    this.finished = false;
     this.applyWeapons(meta);
+    this.startAllCharges();
     this.step();
   }
 
+  /**
+   * 画出双方武器，每件武器带一条读条。
+   * 读条时长来自武器的占格数（data/items.js 的 chargeSeconds），
+   * 读满才挥一次 —— 大剑慢、匕首快，节奏从这里就能看出来。
+   */
   applyWeapons({ weaponsA = [], weaponsB = [] } = {}) {
-    const draw = (el, list) => {
+    this.weaponEls = { A: new Map(), B: new Map() };
+    const draw = (el, list, side) => {
       if (!el) return;
-      el.innerHTML = list.map((w) => `<span class="wchip">#${w.order + 1} ${esc(w.name)}</span>`).join('');
+      el.innerHTML = list.map((w) => `
+        <div class="wbar" data-uid="${esc(w.uid || w.name)}">
+          <span class="wb-name">${w.order != null ? `<i>#${w.order + 1}</i> ` : ''}${esc(w.name)}</span>
+          <span class="wb-track"><i></i></span>
+        </div>`).join('');
+      for (const w of list) {
+        const fill = el.querySelector(`.wbar[data-uid="${cssEscape(w.uid || w.name)}"] .wb-track i`);
+        if (fill) this.weaponEls[side].set(w.uid || w.name, { fill, charge: w.charge || 1.5 });
+      }
     };
-    draw(this.root.querySelector('#weapons-a'), weaponsA);
-    draw(this.root.querySelector('#weapons-b'), weaponsB);
+    draw(this.root.querySelector('#weapons-a'), weaponsA, 'A');
+    draw(this.root.querySelector('#weapons-b'), weaponsB, 'B');
+  }
+
+  /** 让某件武器从头开始读条 */
+  startCharge(side, key) {
+    const rec = this.weaponEls?.[side]?.get(key);
+    if (!rec) return;
+    const fill = rec.fill;
+    const dur = Math.max(0.12, rec.charge / this.speed);
+    fill.style.transition = 'none';
+    fill.style.width = '0%';
+    void fill.offsetWidth;                 // 强制回流，保证每次都能从头播
+    fill.style.transition = `width ${dur}s linear`;
+    fill.style.width = '100%';
+  }
+
+  /** 开场时所有武器一起开始读条 */
+  startAllCharges() {
+    for (const side of ['A', 'B']) {
+      const map = this.weaponEls?.[side];
+      if (!map) continue;
+      for (const key of map.keys()) this.startCharge(side, key);
+    }
   }
 
   step() {
@@ -157,6 +195,9 @@ export class BattleStage {
   animateAttack(ev) {
     const { self, foe, selfPortrait, foePortrait } = this.sideEls(ev.side);
     const fxClass = FX_CLASS[ev.fx] || FX_CLASS.slash;
+
+    // 这件武器读满了：重置它的读条，继续下一轮
+    this.startCharge(ev.side, ev.weaponUid || ev.weaponName);
 
     // 出手方
     self?.classList.add(ev.fx === 'heavy' ? 'act-heavy' : (ev.fx === 'arrow' || ev.fx === 'magic' ? 'act-cast' : 'act-lunge'));
@@ -295,4 +336,9 @@ function fxGlyph(fx) {
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+/** 属性选择器里用的转义，避免 uid 里的特殊字符把选择器搞坏 */
+function cssEscape(s) {
+  return String(s ?? '').replace(/["\\]/g, '\\$&');
 }

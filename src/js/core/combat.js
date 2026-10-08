@@ -9,7 +9,7 @@
  *     前端战斗舞台照着事件播动画。逻辑与表现彻底分开。
  */
 
-import { ITEM_BY_ID } from '../data/items.js';
+import { ITEM_BY_ID, chargeSeconds } from '../data/items.js';
 import { COMBAT } from '../data/constants.js';
 import { cells } from '../data/shapes.js';
 import { synergyBonus } from '../data/synergies.js';
@@ -135,10 +135,10 @@ export function buildUnit(board, { name, hp, classDef = null, branch = null, see
     });
 
     if (item.slot === 'weapon' && (st.damage || 0) > 0) {
-      // 同类相邻最多 3 层，每层 -8% 冷却
+      // 读条时长由占格数决定；同类相邻最多 3 层，每层 -8%
       const stacks = Math.min(3, sameCatNeighbors.get(item.uid) || 0);
-      let cd = (st.cooldown || 1.6) * (1 - 0.08 * stacks);
-      cd = Math.max(0.4, cd / (1 + unit.globalSpeed));
+      let charge = chargeSeconds(item) * (1 - 0.08 * stacks);
+      charge = Math.max(0.35, charge / (1 + unit.globalSpeed));
       // 触发顺序决定起手延迟：越靠后越晚出手
       const startDelay = (idx >= 0 ? idx : 0) * COMBAT.orderStep;
       const isFirst = idx === unit.order[0];
@@ -148,8 +148,9 @@ export function buildUnit(board, { name, hp, classDef = null, branch = null, see
         name: item.name,
         order: idx,
         damage: st.damage || 0,
-        cooldown: cd,
-        timer: startDelay + cd * (1 - readyFactor),
+        charge,
+        cooldown: charge,
+        timer: startDelay + charge * (1 - readyFactor),
         burn: st.burn || 0,
         poison: (st.poison || 0) + unit.poisonAura,
         pierce: st.pierce || 0,

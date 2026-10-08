@@ -15,6 +15,7 @@
 import { Run, PHASE } from './core/run.js';
 import { CLASSES } from './data/classes.js';
 import { ECON, MATCH } from './data/constants.js';
+import { ITEM_BY_ID, chargeSeconds } from './data/items.js';
 import { buildOverview, nextStep } from './core/analyze.js';
 import { shopHints, progressFor } from './data/recipes.js';
 import { BattleStage } from './ui/stage.js';
@@ -213,11 +214,13 @@ function fitBoard() {
   const box = el.boardWrap;
   const cols = run.board.cols;
   const rows = run.board.rows;
-  const availW = box.clientWidth - 24;
-  const availH = box.clientHeight - 24;
+  // 只留很少的余量：格子要尽量大，边框不该吃掉空间
+  const availW = box.clientWidth - 10;
+  const availH = box.clientHeight - 10;
   if (availW <= 0 || availH <= 0) return;
-  const byW = (availW - cols * 3) / cols;
-  const byH = (availH - rows * 3) / rows;
+  const layout = getLayout();
+  const byW = (availW - cols * layout.GAP) / cols;
+  const byH = (availH - rows * layout.GAP) / rows;
   const cell = Math.min(byW, byH);
   if (setCellSize(cell)) renderAll();
 }
@@ -504,8 +507,19 @@ function runBattle() {
     weaponsA: run.board.list()
       .filter((e) => e.item.cat === 'weapon')
       .sort((a, b) => run.board.orderIndex(a.item.uid) - run.board.orderIndex(b.item.uid))
-      .map((e) => ({ order: run.board.orderIndex(e.item.uid), name: e.item.name })),
-    weaponsB: result.foeBuild.filter((i) => i.cat === 'weapon').map((i, idx) => ({ order: idx, name: i.name })),
+      .map((e) => ({
+        uid: e.item.uid,
+        order: run.board.orderIndex(e.item.uid),
+        name: e.item.name,
+        charge: chargeSeconds(e.item),
+      })),
+    weaponsB: result.foeBuild.filter((i) => i.cat === 'weapon')
+      .map((i, idx) => ({
+        uid: `foe-${idx}`,
+        order: idx,
+        name: i.name,
+        charge: ITEM_BY_ID[i.id] ? chargeSeconds(ITEM_BY_ID[i.id]) : 1.6,
+      })),
   });
 }
 
