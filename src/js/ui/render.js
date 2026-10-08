@@ -1,14 +1,16 @@
 /**
- * 渲染层（v0.2）
+ * 渲染层 v0.3
  *
- * 最重要的变化：道具按真实形状渲染。
- * 每个占用格单独画一个方块，拼出 L 形、十字形、剑形这些不规则轮廓 ——
- * 玩家一眼就能看出「这块塞得进去吗」，而不是看到一个矩形。
+ * 关键改动：拖拽不再重建 DOM。
+ *  - renderBoard 只在状态变化时调用一次
+ *  - 拖拽期间只做两件小事：移动被拖那一件的 transform、切换少数格子的高亮 class
+ *  - 两者都是 O(形状格数)，不再是 O(整个界面)
  */
 
 import { cells, size } from '../data/shapes.js';
 import { CATEGORIES, RARITY } from '../data/items.js';
-import { BOARD } from '../data/constants.js';
+import { BOARD, SHOP_QUALITY } from '../data/constants.js';
+import { itemEffectiveStats, dpsOf, armoredDps } from '../core/analyze.js';
 
 const CELL = BOARD.cell;
 const GAP = BOARD.gap;
@@ -19,67 +21,45 @@ export function cellToPx(x, y) {
   return { left: PAD + x * STEP, top: PAD + y * STEP };
 }
 
-export function pxToCell(clientX, clientY, boardEl) {
-  const r = boardEl.getBoundingClientRect();
-  return {
-    x: Math.round((clientX - r.left - PAD) / STEP),
-    y: Math.round((clientY - r.top - PAD) / STEP),
-  };
-}
-
 export function iconFor(item) { return `assets/icons/${item.id}.png`; }
-
 export function catName(cat) { return CATEGORIES[cat]?.name || cat; }
 export function tierColor(tier) { return (RARITY[tier] || RARITY[1]).color; }
 
-/**
- * 画背包。
- * @param {HTMLElement} root
- * @param {Board} board
- * @param {object} opts { selectedUid, hover, onGrab, onCellClick, showOrder, orderMap }
- */
+// ============ 背包 ============
+
 export function renderBoard(root, board, opts = {}) {
-  const { selectedUid, hover, onGrab, onCellClick, showOrder = true, orderMap = null } = opts;
+  const { selectedUid, draggingUid, onGrab, showOrder = true, orderMap = null } = opts;
   root.innerHTML = '';
   root.style.gridTemplateColumns = `repeat(${board.cols}, ${CELL}px)`;
   root.style.gridTemplateRows = `repeat(${board.rows}, ${CELL}px)`;
   root.style.width = `${board.cols * STEP - GAP + PAD * 2}px`;
   root.style.height = `${board.rows * STEP - GAP + PAD * 2}px`;
 
-  // 底层格子 + 触发顺序箭头
-  const hoverSet = new Map();
-  for (const c of (hover?.cells || [])) hoverSet.set(`${c.x},${c.y}`, hover.ok);
+  // 缓存格子元素，拖拽时按坐标直接取，不再 querySelector 全表
+  const cellEls = new Map();
 
   for (let y = 0; y < board.rows; y++) {
     for (let x = 0; x < board.cols; x++) {
       const d = document.createElement('div');
       d.className = 'cellbg';
-      d.dataset.x = x;
-      d.dataset.y = y;
-      if (showOrder && x === 0) {
-        d.dataset.row = y + 1;
-        d.title = `第 ${y + 1} 行：从上往下的触发顺序`;
-      }
-      const hv = hoverSet.get(`${x},${y}`);
-      if (hv === true) d.classList.add('hover-ok');
-      else if (hv === false) d.classList.add('hover-bad');
-      if (hover?.anchor && hover.anchor.x === x && hover.anchor.y === y) d.classList.add('hover-anchor');
+      if (showOrder && x === 0) d.dataset.row = y + 1;
       root.appendChild(d);
+      cellEls.set(`${x},${y}`, d);
     }
   }
+  root._cellEls = cellEls;
 
-  // 道具：按形状逐格画出不规则轮廓
+  const chipEls = new Map();
+
   for (const entry of board.list()) {
     const el = document.createElement('div');
     el.className = `shape-item cat-${entry.item.cat}`;
     el.dataset.uid = entry.item.uid;
     el.style.left = `${cellToPx(entry.x, entry.y).left}px`;
     el.style.top = `${cellToPx(entry.x, entry.y).top}px`;
-    const sz = size(entry.shape);
-    el.style.width = `${sz.w * STEP - GAP}px`;
-    el.style.height = `${sz.h * STEP - GAP}px`;
+    el.style.width = `${entry.w ?? size(entry.shape).w * STEP - GAP}px`;
+    el.style.height = `${entry.h ?? size(entry.shape).h * STEP - GAP}px`;
 
-    // 逐格画块，拼出真实形状
     for (const c of cells(entry.shape)) {
       const cell = document.createElement('span');
       cell.className = 'sc';
@@ -88,45 +68,85 @@ export function renderBoard(root, board, opts = {}) {
       cell.style.width = `${CELL}px`;
       cell.style.height = `${CELL}px`;
       el.appendChild(cell);
-      // 给每格挂一个可点区域，方便点到形状任意位置都能拿起
-      const hit = document.createElement('span');
-      hit.className = 'sc-hit';
-      hit.style.left = `${c.x * STEP}px`;
-      hit.style.top = `${c.y * STEP}px`;
-      hit.style.width = `${CELL}px`;
-      hit.style.height = `${CELL}px`;
-      el.appendChild(hit);
     }
 
     if (entry.item.uid === selectedUid) el.classList.add('selected');
+    if (entry.item.uid === draggingUid) el.classList.add('dragging');
     if (board.neighbors(entry.item.uid).size > 0) el.classList.add('linked');
 
-    // 触发顺序徽标
     if (showOrder) {
-      const order = orderMap ? orderMap.get(entry.item.uid) : board.orderIndex(entry.item.uid);
+      const ord = orderMap ? orderMap.get(entry.item.uid) : board.orderIndex(entry.item.uid);
       const badge = document.createElement('span');
       badge.className = 'orderbadge';
-      badge.textContent = `#${(order ?? 0) + 1}`;
-      badge.style.left = `${2}px`;
-      badge.style.top = `${2}px`;
+      badge.textContent = `${(ord ?? 0) + 1}`;
       el.appendChild(badge);
     }
 
-    // 图标与名称叠在形状中央
     const inner = document.createElement('div');
     inner.className = 'inner';
-    const tier = tierColor(entry.item.tier);
     inner.innerHTML = `
       <img class="ico" src="${iconFor(entry.item)}" alt="" onerror="this.style.display='none'">
-      <span class="nm" style="color:${tier}">${entry.item.name}</span>`;
+      <span class="nm" style="color:${tierColor(entry.item.tier)}">${entry.item.name}</span>`;
     el.appendChild(inner);
 
     el.addEventListener('pointerdown', (ev) => onGrab?.(ev, entry));
     root.appendChild(el);
+    chipEls.set(entry.item.uid, el);
+  }
+
+  root._chipEls = chipEls;
+}
+
+/** 拖拽时只改这一个函数：给出被拖道具当前该在哪 */
+export function moveChip(root, uid, dx, dy) {
+  const el = root._chipEls?.get(uid);
+  if (!el) return;
+  el.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
+}
+
+export function resetChip(root, uid) {
+  const el = root._chipEls?.get(uid);
+  if (el) {
+    el.style.transform = '';
+    el.classList.remove('dragging');
   }
 }
 
-/** 商店卡片：小尺寸形状预览 + 价格 */
+export function setChipDragging(root, uid, on) {
+  const el = root._chipEls?.get(uid);
+  if (!el) return;
+  el.classList.toggle('dragging', on);
+  el.style.willChange = on ? 'transform' : '';
+}
+
+/** 落点高亮：只碰形状覆盖到的那几格 */
+export function setHover(root, hoverCells, ok, anchor) {
+  const map = root._cellEls;
+  if (!map) return;
+  for (const el of map.values()) {
+    if (el.classList.contains('hover-ok') || el.classList.contains('hover-bad') || el.classList.contains('hover-anchor')) {
+      el.classList.remove('hover-ok', 'hover-bad', 'hover-anchor');
+    }
+  }
+  if (!hoverCells) return;
+  for (const c of hoverCells) {
+    const el = map.get(`${c.x},${c.y}`);
+    if (el) el.classList.add(ok ? 'hover-ok' : 'hover-bad');
+  }
+  if (anchor) {
+    const el = map.get(`${anchor.x},${anchor.y}`);
+    if (el) el.classList.add('hover-anchor');
+  }
+}
+
+/** 出售区高亮 */
+export function setSellActive(on) {
+  const z = document.getElementById('sell-zone');
+  if (z) z.classList.toggle('armed', !!on);
+}
+
+// ============ 商店 ============
+
 export function renderShop(root, shop, gold, { onBuy, onLock }) {
   root.innerHTML = '';
   shop.slots.forEach((slot, i) => {
@@ -135,6 +155,12 @@ export function renderShop(root, shop, gold, { onBuy, onLock }) {
     if (slot.sold) el.classList.add('sold');
     if (shop.locked[i]) el.classList.add('locked');
     const afford = gold >= slot.item.price;
+
+    const d = slot.item.stats?.damage;
+    const cd = slot.item.stats?.cooldown;
+    const dps = d && cd ? d / cd : null;
+    const dpsLine = dps ? `<span class="dps">${dps.toFixed(1)}/秒</span>` : '';
+
     el.innerHTML = `
       <div class="sc-top">
         <span class="lock ${shop.locked[i] ? 'on' : ''}">${shop.locked[i] ? '锁' : '○'}</span>
@@ -144,8 +170,8 @@ export function renderShop(root, shop, gold, { onBuy, onLock }) {
       <img class="ico" src="${iconFor(slot.item)}" alt="" onerror="this.style.display='none'">
       <div class="nm">${slot.item.name}</div>
       <div class="cat">${catName(slot.item.cat)} · ${cells(slot.item.shape).length}格</div>
-      <div class="pr" style="${afford ? '' : 'color:#e2604a'}">${slot.item.price} 金</div>
-      <div class="shapedots">${shapeDots(slot.item.shape)}</div>`;
+      ${dpsLine}
+      <div class="pr" style="${afford ? '' : 'color:#e2604a'}">${slot.item.price} 金</div>`;
     el.addEventListener('click', (ev) => {
       if (ev.shiftKey || ev.altKey) { onLock(i); return; }
       onBuy(i);
@@ -155,7 +181,80 @@ export function renderShop(root, shop, gold, { onBuy, onLock }) {
   });
 }
 
-/** 用小方块矩阵表示形状，商店卡片和详情面板都用它 */
+/** 商店品质（自动提升，玩家不用管） */
+export function renderShopQuality(el, shop) {
+  const q = shop.quality;
+  const next = SHOP_QUALITY.find((s) => s.fromRound > shop.round);
+  el.innerHTML = `<span class="q-badge">${q.label}</span>` +
+    (next ? `<span class="q-next">第 ${next.fromRound} 回合升到「${next.label}」</span>` : '');
+}
+
+/** 商店推荐：告诉玩家买什么能凑出进阶 */
+export function renderShopHints(el, hints) {
+  if (!hints || !hints.length) { el.innerHTML = ''; return; }
+  el.innerHTML = hints.map((h) => `<span class="sh-chip" title="${h.reason}">${h.name} · ${h.reason}</span>`).join('');
+}
+
+/**
+ * 升级路径面板：把「买两件一样的就能升」讲清楚。
+ * 已凑齐的排最前，其次是背包里已有的，最后是能买到的。
+ */
+export function renderPaths(el, board, recipes) {
+  const owned = new Map();
+  for (const e of board.list()) owned.set(e.item.id, (owned.get(e.item.id) || 0) + 1);
+
+  const rows = recipes.map((r) => {
+    const have = owned.get(r.materialId) || 0;
+    return {
+      ...r,
+      have,
+      ready: have >= r.need,
+      partial: have === 1,
+    };
+  });
+
+  const sorted = rows.sort((a, b) => {
+    const score = (x) => (x.ready ? 0 : x.partial ? 1 : 2);
+    return (score(a) - score(b)) || (a.material.tier - b.material.tier);
+  });
+
+  const top = sorted.filter((r) => r.ready || r.partial).concat(sorted.filter((r) => !r.ready && !r.partial)).slice(0, 14);
+
+  el.innerHTML = top.map((r) => `
+    <div class="p-row ${r.ready ? 'ready' : r.partial ? 'partial' : ''}">
+      <span class="p-mat">${r.material.name}</span>
+      <span class="p-count">${r.have}/${r.need}</span>
+      <span class="p-arrow">→</span>
+      <span class="p-out" style="color:${tierColor(r.output.tier)}">${r.output.name}</span>
+      ${r.ready ? '<span class="p-tag">相邻即可合成</span>' : r.partial ? '<span class="p-tag">再买 1 件</span>' : ''}
+    </div>`).join('') || '<p class="hint">暂无配方。</p>';
+}
+
+/** 战斗页底部数值卡 */
+export function renderFighterCard(side, d) {
+  const q = (id) => document.getElementById(`fc-${side}-${id}`);
+  const nameEl = document.getElementById(`fc-${side}-name`);
+  if (nameEl && d.name) nameEl.textContent = d.name;
+  const set = (id, val) => { const e2 = q(id); if (e2) e2.textContent = val; };
+  set('hp', d.maxHp ? `${Math.round(d.hp)} / ${d.maxHp}` : Math.round(d.hp));
+  set('armor', Math.round(d.armor || 0));
+  set('dps', `${(d.dps || 0).toFixed(1)}/秒`);
+  set('crit', `${Math.round((d.crit || 0) * 100)}% / ${Math.round(d.thorns || 0)}`);
+  set('regen', (d.regen || 0).toFixed(1));
+  const buildEl = q('build');
+  if (buildEl) buildEl.textContent = d.build || '';
+}
+
+/** 战斗页顶部的双方构筑速览（保留给以后扩展） */
+export function renderBattleOverview(el, result) {
+  if (!el) return;
+  el.innerHTML = `
+    <span class="bo">你 ${result.myStats?.weapons ?? 0} 件武器 · 联动 ${result.myStats?.synergies ?? 0}</span>
+    <span class="bo dim">对方 ${result.foeStats?.weapons ?? 0} 件武器 · 联动 ${result.foeStats?.synergies ?? 0}</span>`;
+}
+
+export const LAYOUT = { CELL, GAP, PAD, STEP };
+
 export function shapeDots(shape, cls = '') {
   const sz = size(shape);
   const on = new Set(cells(shape).map((c) => `${c.x},${c.y}`));
@@ -168,8 +267,7 @@ export function shapeDots(shape, cls = '') {
   return html + '</div>';
 }
 
-/** SVG 版形状缩略图，用于商店卡片 */
-export function miniShapeSvg(shape, cat = 'weapon', cell = 9) {
+export function miniShapeSvg(shape, cat = 'weapon', cell = 8) {
   const sz = size(shape);
   const on = new Set(cells(shape).map((c) => `${c.x},${c.y}`));
   const color = CATEGORIES[cat]?.color || '#9aa4b2';
@@ -180,37 +278,71 @@ export function miniShapeSvg(shape, cat = 'weapon', cell = 9) {
   for (let y = 0; y < sz.h; y++) {
     for (let x = 0; x < sz.w; x++) {
       if (!on.has(`${x},${y}`)) continue;
-      rects += `<rect x="${(x + pads) * cell + 1}" y="${(y + pads) * cell + 1}" width="${cell - 2}" height="${cell - 2}" rx="2" fill="${color}" opacity="0.9"/>`;
+      rects += `<rect x="${(x + pads) * cell + 1}" y="${(y + pads) * cell + 1}" width="${cell - 2}" height="${cell - 2}" rx="2" fill="${color}" opacity="0.92"/>`;
     }
   }
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${rects}</svg>`;
 }
 
-/** 详情面板 */
+// ============ 详情（带伤害引导） ============
+
 export function renderDetail(el, entry, board) {
   if (!entry) {
     el.innerHTML = `
-      <p class="hint">点道具看详情。拖动调整位置，按 R 旋转。</p>
-      <p class="hint">背包每行从上往下即为触发顺序，摆得越靠前出手越早。</p>`;
+      <p class="hint">点一件道具看它的数值、相邻加成与出手顺序。</p>
+      <p class="hint">拖动调整位置，R 旋转，Delete 或拖到出售区卖出。</p>`;
     return;
   }
   const it = entry.item;
-  const nb = [...board.neighbors(it.uid)].map((u) => board.get(u)?.item).filter(Boolean);
-  const statLines = Object.entries(it.stats || {})
-    .filter(([k]) => k !== 'fx')
+  const a = itemEffectiveStats(board, it.uid);
+  const stats = a?.stats || it.stats || {};
+  const src = a?.sources || [];
+
+  const base = it.stats || {};
+  const lines = [];
+
+  if (it.cat === 'weapon') {
+    const d0 = base.damage || 0;
+    const dNow = stats.damage || 0;
+    const bonus = dNow - d0;
+    const dps = dpsOf(it, stats);
+    const armored = armoredDps(it, stats);
+    lines.push(`<div class="dpsbox">
+      <div class="dpsbig">${dps ? dps.toFixed(1) : '0'} <span>每秒伤害</span></div>
+      <div class="dpssub">对 20 护甲目标约 ${armored ? armored.toFixed(1) : '0'} / 秒</div>
+      <div class="dpsbreak">${d0} 基础伤害${bonus > 0 ? ` <b>+${bonus}</b> 相邻加成` : ''} ÷ ${(stats.cooldown || 0).toFixed(1)} 秒</div>
+    </div>`);
+  }
+
+  const rows = Object.entries(stats)
+    .filter(([k]) => k !== 'fx' && k !== 'aura')
     .map(([k, v]) => `<div class="kv"><span>${statName(k)}</span><b>${fmtStat(k, v)}</b></div>`)
     .join('');
+  lines.push(rows);
+
+  if (stats.aura) {
+    lines.push(`<div class="kv"><span>相邻光环</span><b>${Object.entries(stats.aura).map(([k2, v2]) => `${statName(k2)} +${v2}`).join('，')}</b></div>`);
+  }
+
+  if (src.length) {
+    lines.push(`<div class="srcbox"><div class="srctitle">加成来源</div>${src.map((s) => `<div class="kv"><span>${s.from}</span><b>${statName(s.stat)} +${s.value}</b></div>`).join('')}</div>`);
+  }
+
+  const nb = [...board.neighbors(it.uid)].map((u) => board.get(u)?.item).filter(Boolean);
+  const ord = board.orderIndex(it.uid);
+  lines.push(`<div class="kv"><span>出手顺序</span><b>第 ${ord + 1} 位 · 起手 ${(ord * 0.12).toFixed(2)}s</b></div>`);
+  lines.push(`<div class="kv"><span>相邻</span><b>${nb.length ? nb.map((x) => x.name).join('、') : '无'}</b></div>`);
+
   el.innerHTML = `
     <h3>${it.name}
       <span class="tag" style="color:${tierColor(it.tier)}">T${it.tier}</span>
       <span class="tag">${catName(it.cat)}</span>
     </h3>
-    <div class="detail-shape">${shapeDots(it.shape, 'lg')}<span class="sz">${size(it.shape).w}×${size(it.shape).h} · ${cells(it.shape).length} 格</span></div>
     <p class="hint">${it.desc || ''}</p>
-    ${statLines}
-    <div class="kv"><span>触发顺序</span><b>第 ${board.orderIndex(it.uid) + 1} 位</b></div>
-    <div class="kv"><span>相邻道具</span><b>${nb.length ? nb.map((x) => x.name).join('、') : '无'}</b></div>
-    <p class="hint">R 旋转 · Delete 卖出 · 拖到任意格调整</p>`;
+    ${lines.join('')}
+    <div class="row mt">
+      <button class="danger sm" id="btn-sell-one">卖出（+${Math.max(1, Math.floor(it.price * 0.6))} 金）</button>
+    </div>`;
 }
 
 function statName(k) {
@@ -227,7 +359,7 @@ function statName(k) {
 
 function fmtStat(k, v) {
   if (typeof v === 'object') {
-    return Object.entries(v).map(([k2, v2]) => `${statName(k2)} +${fmtPct(k2, v2)}`).join('，');
+    return Object.entries(v).map(([k2, v2]) => `${statName(k2)} +${v2}`).join('，');
   }
   if (['crit', 'critMult', 'lifesteal', 'speed', 'globalSpeed'].includes(k)) {
     return k === 'critMult' ? `×${v}` : `+${Math.round(v * 100)}%`;
@@ -236,12 +368,8 @@ function fmtStat(k, v) {
   return `+${v}`;
 }
 
-function fmtPct(k, v) {
-  if (['speed', 'globalSpeed'].includes(k)) return `${Math.round(v * 100)}%`;
-  return `${v}`;
-}
+// ============ 顶栏 / 引导 / 构筑总览 ============
 
-/** 顶栏状态 */
 export function renderStats(el, run) {
   const h = run.header;
   el.innerHTML = `
@@ -249,13 +377,40 @@ export function renderStats(el, run) {
     <div class="stat gold"><b>${h.gold}</b><span>金币</span></div>
     <div class="stat win"><b>${h.wins}</b><span>胜场</span></div>
     <div class="stat"><b>${h.round}</b><span>回合</span></div>
-    <div class="stat"><b>${run.shop.level}</b><span>商店</span></div>
     <div class="stat cls"><b>${h.branchName || h.className}</b><span>${h.branchName ? '分支' : '职业'}</span></div>`;
 }
 
-/** 背包占用提示 */
-export function renderCapacity(el, board) {
-  el.textContent = `已用 ${board.usedCells()} / ${board.capacity()} 格（空 ${board.freeCells()}）`;
+export function renderCapacity(el, board, totalDps) {
+  const dps = totalDps != null ? ` · 总输出 ${totalDps.toFixed(1)}/秒` : '';
+  el.textContent = `${board.usedCells()}/${board.capacity()} 格${dps}`;
 }
 
-export const LAYOUT = { CELL, GAP, PAD, STEP };
+/** 顶部一条新手引导 */
+export function renderGuide(el, step) {
+  el.innerHTML = `<span class="gd-idx">${step.idx}</span><b>${step.title}</b><span class="gd-detail">${step.detail}</span>`;
+}
+
+/**
+ * 角色属性面板：对齐官方的行式排版。
+ * 每行一个字段，左侧名称右侧数值，用金色小图标区分。
+ */
+export function renderOverview(el, ov, board) {
+  const rows = [
+    { ico: '⚔', label: '每秒伤害', value: ov.totalDps.toFixed(1), hi: true },
+    { ico: '🛡', label: '护甲', value: ov.armor },
+    { ico: '✚', label: '治疗量', value: ov.heal },
+    { ico: '🗡', label: '武器件数', value: ov.weaponCount },
+    { ico: '✦', label: '已用格数', value: `${board.usedCells()}/${board.capacity()}` },
+  ];
+  if (ov.dpsMul > 1) {
+    rows.push({ ico: '★', label: '联动加成', value: `+${Math.round((ov.dpsMul - 1) * 100)}%` });
+  }
+
+  const rowsHtml = rows.map((r) => `
+    <div class="sr">
+      <span>${r.ico} ${r.label}</span>
+      <b ${r.hi ? 'style="color:#175c5c;font-size:13.5px"' : ''}>${r.value}</b>
+    </div>`).join('');
+
+  el.innerHTML = `<div class="stat-rows">${rowsHtml}</div>`;
+}

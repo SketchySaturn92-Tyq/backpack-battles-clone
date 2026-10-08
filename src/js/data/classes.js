@@ -135,8 +135,8 @@ export const CLASSES = [
         id: 'collector',
         name: '收藏家',
         atRound: 4,
-        desc: '商店等级上限提高到 6 级。',
-        bonus: { maxShopLevel: 6 },
+        desc: '商店多陈列 2 件（一次 8 件）。',
+        bonus: { extraShopSlots: 2 },
         unlockItems: ['goldenIdol', 'merchantSeal'],
       },
       {

@@ -4,92 +4,156 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>背包乱斗 · 复刻版</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231b1f28'/%3E%3Crect x='5' y='6' width='9' height='9' rx='2' fill='%23e8b33c'/%3E%3Crect x='16' y='6' width='9' height='9' rx='2' fill='%234fa3e3'/%3E%3Crect x='5' y='17' width='20' height='9' rx='2' fill='%23e2604a'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%2355351f'/%3E%3Crect x='4' y='5' width='10' height='10' rx='2' fill='%23c99a41'/%3E%3Crect x='17' y='5' width='10' height='10' rx='2' fill='%23b8c6dd'/%3E%3Crect x='4' y='18' width='23' height='9' rx='2' fill='%23e2b48c'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="src/css/style.css">
 </head>
 <body>
 <div id="app">
 
-  <div class="topbar">
-    <div>
-      <h1>背包乱斗 · 复刻版 <span class="sub">v0.2</span></h1>
-      <div class="sub">不规则形状 · 整理即策略 · 位置决定出手</div>
+  <!-- ========== 顶栏：木墙 + 木牌 ========== -->
+  <header class="topbar">
+    <div class="brand">
+      <h1>背包乱斗 <span class="ver">复刻版</span></h1>
     </div>
     <div class="spacer"></div>
-    <div id="stats" class="row" style="gap:7px"></div>
+    <div id="stats" class="stats"></div>
+  </header>
+
+  <!-- 引导条 -->
+  <div id="guide" class="guide"></div>
+
+  <!-- ==================== 一级页面：买 + 整理 ==================== -->
+  <div id="page-shop" class="page">
+
+    <div class="shop-layout">
+
+      <!-- 左：背包 + 角色 -->
+      <section class="col-bag">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>背包 INVENTORY</h2>
+            <span id="capacity" class="cap"></span>
+          </div>
+
+          <div class="board-row">
+            <div id="board-wrap" class="board-wrap"><div id="board"></div></div>
+            <div id="sell-zone" class="sell-zone">
+              <span class="sz-icon">✕</span>
+              <span class="sz-text">拖到这里<br>卖出</span>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button class="primary" id="btn-battle">开始战斗</button>
+            <button id="btn-refresh">刷新</button>
+            <button id="btn-auto" class="ghost">自动整理</button>
+            <span class="spacer"></span>
+            <button id="btn-recipes" class="ghost sm">合成图鉴</button>
+            <button id="btn-help" class="ghost icon" title="玩法">?</button>
+            <button id="btn-reset" class="ghost icon" title="换职业">↺</button>
+          </div>
+        </div>
+
+        <div class="panel hero-panel">
+          <img id="hero-art" class="hero-art" src="assets/chars/char-0.png" alt="">
+          <div class="hero-info">
+            <div class="panel-head" style="margin:-11px -11px 8px">
+              <h2>角色属性</h2>
+              <span id="hero-class" class="cap"></span>
+            </div>
+            <div id="overview" class="overview"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 中：商店 + 升级路径 -->
+      <section class="col-shop">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>商店 SHOP</h2>
+            <span id="shop-quality" class="quality"></span>
+            <span class="spacer"></span>
+            <span class="hint">左键买 · 右键锁定</span>
+          </div>
+          <div id="shop" class="shop-grid six"></div>
+          <div id="shop-hints" class="shop-hints"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>升级路径</h2>
+            <span class="hint">两件同名同阶相邻即合成</span>
+          </div>
+          <div id="paths" class="paths"></div>
+        </div>
+      </section>
+
+      <!-- 右：详情 + 事件 -->
+      <section class="col-side">
+        <div class="panel">
+          <div class="panel-head"><h2>道具详情</h2></div>
+          <div id="detail" class="detail"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h2>事件</h2></div>
+          <div id="log" class="scrollbox short"></div>
+        </div>
+      </section>
+
+    </div>
   </div>
 
-  <div class="layout">
+  <!-- ==================== 二级页面：战斗 ==================== -->
+  <div id="page-battle" class="page hidden">
+    <div class="panel battle-panel">
 
-    <!-- 左：背包 -->
-    <section class="col-left">
-      <div class="card">
-        <div class="card-head">
-          <h2>我的背包</h2>
-          <span class="spacer"></span>
-          <span id="capacity" class="hint"></span>
+      <div class="battle-top">
+        <div class="bt-left">
+          <span class="bt-name">你的构筑</span>
+          <button id="btn-back" class="ghost sm">← 返回整理</button>
         </div>
-        <div class="board-wrap"><div id="board"></div></div>
-        <div class="row mt">
-          <button class="primary" id="btn-battle">开始战斗</button>
-          <button id="btn-refresh">刷新商店</button>
-          <button id="btn-upgrade">升级商店</button>
+        <div class="bt-mid">
+          <div class="timer" id="battle-timer">准备中</div>
+          <div class="vs-row">
+            <span class="speed" id="speed-btn" title="播放速度">1.4×</span>
+            <span class="skip" id="skip-btn" title="跳到结尾">跳过</span>
+          </div>
         </div>
-        <div class="row mt">
-          <button id="btn-auto" class="sm">自动整理</button>
-          <span class="spacer"></span>
-          <button id="btn-help" class="ghost sm">玩法</button>
-          <button id="btn-reset" class="sm">换职业</button>
+        <div class="bt-right">
+          <span class="bt-name" id="foe-name">对手</span>
+          <span id="battle-round" class="bt-round">第 1 回合</span>
         </div>
       </div>
 
-      <div class="card">
-        <h2>出场顺序（上→下，左→右）</h2>
-        <div id="order-list" class="scrollbox"></div>
-      </div>
-    </section>
-
-    <!-- 中：战斗舞台 + 商店 -->
-    <section class="col-mid">
-      <div class="card">
-        <h2>战斗</h2>
-        <div id="stage-root"><p class="hint center">开始战斗后这里会播放双方角色与攻击动效。</p></div>
-        <div id="battle-log" class="stage-log"></div>
+      <div id="stage-root">
+        <p class="hint center">点「开始战斗」后这里会播放双方角色与攻击动效。</p>
       </div>
 
-      <div class="card">
-        <h2>商店</h2>
-        <div id="shop" class="shop-grid"></div>
-        <p class="hint" style="margin-top:8px">
-          左键买，右键或 Shift+左键锁定。买到手只是先塞进第一个能放的位置，怎么摆要靠自己整理。
-        </p>
-      </div>
-    </section>
+      <div id="battle-log" class="stage-log"></div>
 
-    <!-- 右：详情 -->
-    <section class="col-right">
-      <div class="card">
-        <h2>道具详情</h2>
-        <div id="detail" class="detail"></div>
-      </div>
-
-      <div class="card">
-        <h2>背包装备</h2>
-        <div id="build-list" class="scrollbox"></div>
-      </div>
-
-      <div class="card">
-        <h2>组合联动</h2>
-        <div id="synergy-list" class="scrollbox"></div>
+      <div class="fighter-cards">
+        <div class="fc" id="fc-a">
+          <div class="fc-head"><b>你</b><span id="fc-a-build"></span></div>
+          <div class="fc-row"><span>生命</span><b id="fc-a-hp">—</b></div>
+          <div class="fc-row"><span>护甲</span><b id="fc-a-armor">—</b></div>
+          <div class="fc-row"><span>每秒伤害</span><b id="fc-a-dps">—</b></div>
+          <div class="fc-row"><span>暴击 / 反伤</span><b id="fc-a-crit">—</b></div>
+          <div class="fc-row"><span>每秒回复</span><b id="fc-a-regen">—</b></div>
+        </div>
+        <div class="fc" id="fc-b">
+          <div class="fc-head"><b id="fc-b-name">对手</b><span id="fc-b-build"></span></div>
+          <div class="fc-row"><span>生命</span><b id="fc-b-hp">—</b></div>
+          <div class="fc-row"><span>护甲</span><b id="fc-b-armor">—</b></div>
+          <div class="fc-row"><span>每秒伤害</span><b id="fc-b-dps">—</b></div>
+          <div class="fc-row"><span>暴击 / 反伤</span><b id="fc-b-crit">—</b></div>
+          <div class="fc-row"><span>每秒回复</span><b id="fc-b-regen">—</b></div>
+        </div>
       </div>
 
-      <div class="card">
-        <h2>事件</h2>
-        <div id="log" class="scrollbox"></div>
-      </div>
-    </section>
-
+    </div>
   </div>
+
 </div>
 
 <div id="overlay" class="overlay hidden"><div class="modal"><div id="overlay-body"></div></div></div>

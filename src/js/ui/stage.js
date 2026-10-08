@@ -265,10 +265,17 @@ export class BattleStage {
     this.logEl.scrollTop = this.logEl.scrollHeight;
   }
 
-  /** 立即结束（跳过动画） */
+  /**
+   * 立即结束（跳过动画）。
+   * 必须同时触发 onFinish，否则点了「跳过」战斗页会永远停在演出中。
+   * finished 标记保证跳过与自然播完只收口一次。
+   */
   skip() {
+    if (this.finished) return;
+    this.finished = true;
     this.playing = false;
     clearTimeout(this.timer);
+    this.onFinish?.();
   }
 
   destroy() {

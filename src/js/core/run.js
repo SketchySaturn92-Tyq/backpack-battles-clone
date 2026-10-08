@@ -120,16 +120,9 @@ export class Run {
     return { ok: true };
   }
 
-  upgradeShop() {
-    const cap = this.bonus.maxShopLevel || ECON.maxShopLevel;
-    if (this.shop.level >= cap) return { ok: false, reason: '商店已经满级' };
-    const cost = ECON.levelUpCost + (this.shop.level - 1) * 6;
-    if (this.header.gold < cost) return { ok: false, reason: `需要 ${cost} 金` };
-    this.header.gold -= cost;
-    this.shop.maxLevel = cap;
-    this.shop.setLevel(this.shop.level + 1);
-    this.note(`商店升到 ${this.shop.level} 级（-${cost} 金）`);
-    return { ok: true };
+  /** 商店品质由回合自动决定，玩家不再需要手动升级 */
+  shopQuality() {
+    return this.shop.quality;
   }
 
   // ---------- 整理 ----------
@@ -276,12 +269,27 @@ export class Run {
     const gainPerRound = (mine.goldPerRound || 0);
     if (gainPerRound) this.header.gold += gainPerRound;
 
+    /** 把战斗单位折成 UI 要显示的数值卡 */
+    const cardOf = (u) => ({
+      armor: u.armor,
+      dps: u.weapons.reduce((s, w) => s + w.damage / w.cooldown, 0) * (1 + (u.damageMul || 0)),
+      crit: u.crit,
+      thorns: u.thorns,
+      regen: u.regen,
+      maxHp: u.maxHp,
+      weapons: u.weapons.length,
+      synergies: (u.synergies || []).length,
+    });
+
     this.lastResult = {
       round,
       oppName: opp.name,
       winner: result.winner,
       duration: result.duration,
       hpA: result.hpA, hpB: result.hpB,
+      maxHpA: mine.maxHp, maxHpB: foe.maxHp,
+      myStats: cardOf(mine),
+      foeStats: cardOf(foe),
       dmgTaken: win ? 0 : dmg,
       myPower: unitPower(mine),
       foePower: unitPower(foe),
@@ -317,9 +325,9 @@ export class Run {
     this.branch = b;
     this.header.branchName = b.name;
     this.note(`选择分支：${b.name} —— ${b.desc}`);
-    // 分支解锁的专属道具直接进商店池（下回合刷新可见）
-    if (b.unlockItems?.length) {
-      this.shop.refresh(false);
+    // 分支可能加宽货架
+    if (b.bonus?.extraShopSlots) {
+      this.shop.setSlotCount(ECON.shopSlots + b.bonus.extraShopSlots);
     }
     return { ok: true, branch: b };
   }
@@ -335,17 +343,23 @@ export class Run {
     const extra = this.bonus.extraGold || 0;
     const gain = ECON.baseRoundGold + this.header.round * ECON.roundGoldStep + (this.header.streak >= 2 ? 2 : 0) + extra;
     this.header.gold += gain;
+
+    // 商店品质跟着回合自动走，玩家不用管
+    const qualityUp = this.shop.setRound(this.header.round);
     this.shop.refresh(true);
     this.phase = PHASE.PREPARE;
     this.note(`第 ${this.header.round} 回合开始，收入 ${gain} 金`);
+    if (qualityUp) {
+      this.note(`商店品质提升到「${this.shop.quality.label}」，能出更高阶的道具了`);
+    }
 
     const branches = this.availableBranches();
     if (branches.length) {
       this.pendingBranch = true;
       this.note('可以选子职业了，选一个方向再继续。');
-      return { over: false, gain, offerBranch: true, branches };
+      return { over: false, gain, offerBranch: true, branches, qualityUp, quality: this.shop.quality };
     }
-    return { over: false, gain };
+    return { over: false, gain, qualityUp, quality: this.shop.quality };
   }
 
   finalScore() {

@@ -1,32 +1,38 @@
 /**
- * 主入口（v0.2）
+ * 主入口 v0.4
  *
- * 装配：职业选择 → 准备（买 + 整理 + 合成）→ 战斗演出 → 结算 → 子职业
+ * 页面结构：
+ *   一级页面（#page-shop）：买 + 整理背包。左侧背包与角色，中间商店与升级路径，右侧详情。
+ *   二级页面（#page-battle）：战斗演出 + 双方背包对照 + 底部数值卡。
  *
- * 整理交互的口径：
- *   按下道具 → 跟随鼠标 → 落点实时高亮（绿可放/红不可放）→ 松手放下
- *   旋转：选中后按 R（正转）或 Shift+R（反转）
- *   卖出：选中后按 Delete
- *   空格点一下也能把选中道具移过去，适合精确落位
+ * 拖拽的性能要点：
+ *   1. 拖拽期间绝不重建 DOM，只改被拖那一件的 transform 与少数格子的高亮 class
+ *   2. pointer capture 把事件收在元素自己身上，不挂 window 全局监听
+ *   3. pointermove 只记录坐标，写入放到 requestAnimationFrame，一帧最多一次
+ *   4. 移动用 translate3d（合成层），不改 left/top（会触发布局）
  */
 
 import { Run, PHASE } from './core/run.js';
 import { CLASSES } from './data/classes.js';
 import { ECON, MATCH } from './data/constants.js';
-import { progressList } from './data/synergies.js';
+import { buildOverview, nextStep } from './core/analyze.js';
+import { progressFor, recipesByTier, shopHints } from './data/recipes.js';
 import { BattleStage } from './ui/stage.js';
 import {
-  renderBoard, renderShop, renderDetail, renderStats, renderCapacity,
-  pxToCell, cellToPx, iconFor, LAYOUT,
+  renderBoard, renderShop, renderDetail, renderStats, renderCapacity, renderGuide,
+  renderOverview, renderShopQuality, renderPaths, renderShopHints,
+  renderFighterCard, renderBattleOverview,
+  moveChip, resetChip, setChipDragging, setHover, setSellActive,
+  cellToPx, LAYOUT,
 } from './ui/render.js';
 
 let run = null;
 let selectedUid = null;
-let drag = null;
-let hover = null;
-let stage = null;
 let playing = false;
-let autoTimer = null;
+let stage = null;
+let speed = 1.4;
+let guidesDone = { bought: false, moved: false };
+let drag = null;
 
 const el = {};
 
@@ -39,27 +45,48 @@ function boot() {
 }
 
 function cacheEls() {
-  el.app = document.getElementById('app');
+  el.pageShop = document.getElementById('page-shop');
+  el.pageBattle = document.getElementById('page-battle');
   el.stats = document.getElementById('stats');
+  el.guide = document.getElementById('guide');
   el.board = document.getElementById('board');
-  el.shop = document.getElementById('shop');
-  el.detail = document.getElementById('detail');
   el.capacity = document.getElementById('capacity');
-  el.stage = document.getElementById('stage-root');
+  el.sellZone = document.getElementById('sell-zone');
+  el.shop = document.getElementById('shop');
+  el.shopQuality = document.getElementById('shop-quality');
+  el.shopHints = document.getElementById('shop-hints');
+  el.paths = document.getElementById('paths');
+  el.detail = document.getElementById('detail');
+  el.overview = document.getElementById('overview');
   el.log = document.getElementById('log');
+  el.heroArt = document.getElementById('hero-art');
+  el.heroClass = document.getElementById('hero-class');
+  el.stageRoot = document.getElementById('stage-root');
   el.battleLog = document.getElementById('battle-log');
+  el.battleTimer = document.getElementById('battle-timer');
+  el.battleRound = document.getElementById('battle-round');
+  el.foeName = document.getElementById('foe-name');
+  el.speedBtn = document.getElementById('speed-btn');
+  el.skipBtn = document.getElementById('skip-btn');
   el.overlay = document.getElementById('overlay');
   el.overlayBody = document.getElementById('overlay-body');
   el.toast = document.getElementById('toast');
   el.btnBattle = document.getElementById('btn-battle');
   el.btnRefresh = document.getElementById('btn-refresh');
-  el.btnUpgrade = document.getElementById('btn-upgrade');
   el.btnAuto = document.getElementById('btn-auto');
+  el.btnBack = document.getElementById('btn-back');
+  el.btnRecipes = document.getElementById('btn-recipes');
   el.btnReset = document.getElementById('btn-reset');
   el.btnHelp = document.getElementById('btn-help');
-  el.buildList = document.getElementById('build-list');
-  el.orderList = document.getElementById('order-list');
-  el.synergyList = document.getElementById('synergy-list');
+}
+
+// ============ 页面切换 ============
+
+function showPage(which) {
+  const battle = which === 'battle';
+  el.pageShop.classList.toggle('hidden', battle);
+  el.pageBattle.classList.toggle('hidden', !battle);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // ============ 职业选择 ============
@@ -67,7 +94,7 @@ function cacheEls() {
 function renderClassPicker() {
   el.overlayBody.innerHTML = `
     <h2>选择职业</h2>
-    <p class="lead">职业决定背包尺寸、初始道具与被动。第 ${MATCH.branchRound} 回合可以再选一个子职业分支。</p>
+    <p class="lead">职业决定背包大小与被动。第 ${MATCH.branchRound} 回合可以再选一个分支。</p>
     <div class="class-grid">
       ${CLASSES.map((c) => `
         <button class="class-card" data-class="${c.id}">
@@ -78,7 +105,7 @@ function renderClassPicker() {
           <p class="cc-desc">${c.desc}</p>
           <div class="cc-passive"><b>${c.passive.name}</b>${c.passive.desc}</div>
           <div class="cc-meta">生命 ${c.hp} · 金币 ${c.gold}</div>
-          <div class="cc-branches">分支：${c.branches.map((b) => b.name).join(' / ')}</div>
+          <div class="cc-branches">${c.branches.map((b) => b.name).join(' / ')}</div>
         </button>`).join('')}
     </div>`;
   el.overlay.classList.remove('hidden');
@@ -93,210 +120,209 @@ function renderClassPicker() {
 function startRun(classId, seed = Math.floor(Math.random() * 1e9)) {
   run = new Run({ seed, classId });
   selectedUid = null;
-  hover = null;
+  drag = null;
   playing = false;
+  guidesDone = { bought: false, moved: false };
   if (stage) { stage.destroy(); stage = null; }
   el.battleLog.innerHTML = '';
-  el.stage.innerHTML = '<p class="hint center">开始战斗后这里会播放双方角色与攻击动效。</p>';
+  el.stageRoot.innerHTML = '<p class="hint center">点「开始战斗」后这里会播放双方角色与攻击动效。</p>';
+  el.pageBattle.classList.add('hidden');
+  el.pageShop.classList.remove('hidden');
   renderAll();
-  toast(`已选择 ${run.classDef.name}`);
 }
 
 // ============ 渲染 ============
 
 function renderAll() {
   if (!run) return;
-  renderStats(el.stats, run);
-  renderCapacity(el.capacity, run.board);
-
+  const ov = buildOverview(run.board);
   const orderMap = new Map(run.board.triggerOrder().map((uid, i) => [uid, i]));
+
+  renderStats(el.stats, run);
+  renderCapacity(el.capacity, run.board, ov.totalDps);
+  renderGuide(el.guide, nextStep(run.board, run.header.gold, run.phase));
 
   renderBoard(el.board, run.board, {
     selectedUid,
-    hover,
+    draggingUid: drag?.uid || null,
     orderMap,
-    onGrab: onGrab,
+    onGrab,
   });
 
   renderShop(el.shop, run.shop, run.header.gold, {
-    onBuy: (i) => doBuy(i),
+    onBuy: doBuy,
     onLock: (i) => { run.shop.toggleLock(i); renderAll(); },
   });
+  renderShopQuality(el.shopQuality, run.shop);
+  renderShopHints(el.shopHints, shopHints(run.board, run.shop.slots.filter((s) => !s.sold).map((s) => s.item)));
 
+  renderPaths(el.paths, run.board, recipesByTier());
   renderDetail(el.detail, selectedUid ? run.board.get(selectedUid) : null, run.board);
+  renderOverview(el.overview, ov, run.board);
 
-  renderBuildList();
-  renderOrderList();
-  renderSynergyList();
+  el.heroClass.textContent = run.header.branchName
+    ? `${run.header.className} · ${run.header.branchName}`
+    : run.header.className;
+  el.heroArt.src = heroArtFor(run);
+
+  const sellBtn = document.getElementById('btn-sell-one');
+  if (sellBtn && selectedUid) sellBtn.addEventListener('click', () => doSell(selectedUid));
+
   renderLog();
 
   const prep = run.phase === PHASE.PREPARE && !playing;
   el.btnBattle.disabled = !prep;
   el.btnRefresh.disabled = !prep || run.header.gold < run.refreshCost();
-  el.btnUpgrade.disabled = !prep || run.shop.level >= (run.bonus.maxShopLevel || ECON.maxShopLevel);
   el.btnAuto.disabled = !prep;
-  el.btnRefresh.textContent = run.refreshCost() === 0 ? '刷新商店（免费）' : `刷新商店（${run.refreshCost()} 金）`;
-  el.btnBattle.textContent = playing ? '战斗中…' : '开始战斗';
-}
-
-function renderBuildList() {
-  const list = run.board.list().slice().sort((a, b) => (a.y - b.y) || (a.x - b.x));
-  if (!list.length) { el.buildList.innerHTML = '<p class="hint">背包是空的。</p>'; return; }
-  el.buildList.innerHTML = list.map((e) => `
-    <div class="bl-row ${e.item.cat}">
-      <img src="${iconFor(e.item)}" alt="" onerror="this.style.display='none'">
-      <span class="bl-name">${e.item.name}</span>
-      <span class="bl-shape">${e.shape.map((r) => r.replace(/X/g, '■').replace(/\./g, '·')).join(' / ')}</span>
-    </div>`).join('');
-}
-
-function renderOrderList() {
-  const order = run.board.triggerOrder();
-  if (!order.length) { el.orderList.innerHTML = '<p class="hint">暂无。</p>'; return; }
-  el.orderList.innerHTML = order.map((uid, i) => {
-    const e = run.board.get(uid);
-    if (!e) return '';
-    return `<div class="od-row">
-      <span class="od-idx">${i + 1}</span>
-      <img src="${iconFor(e.item)}" alt="" onerror="this.style.display='none'">
-      <span class="od-name">${e.item.name}</span>
-      <span class="od-pos">第 ${e.x + 1} 列 ${e.y + 1} 行</span>
-    </div>`;
-  }).join('');
+  el.btnRefresh.textContent = run.refreshCost() === 0 ? '刷新（免费）' : `刷新（${run.refreshCost()} 金）`;
 }
 
 function renderLog() {
-  const lines = run.log.slice(-80);
-  el.log.innerHTML = lines.map((l) => `<div class="lg">${l.text}</div>`).join('');
+  el.log.innerHTML = run.log.slice(-60).map((l) => `<div class="lg">${l.text}</div>`).join('');
   el.log.scrollTop = el.log.scrollHeight;
-}
-
-/** 组合联动：已激活的高亮，差几件的显示进度 */
-function renderSynergyList() {
-  if (!el.synergyList) return;
-  const list = progressList(run.board);
-  const active = list.filter((x) => x.ready);
-  const near = list.filter((x) => !x.ready && x.gap <= 2).slice(0, 4);
-
-  if (!active.length && !near.length) {
-    el.synergyList.innerHTML = '<p class="hint">暂时没有联动。同类道具攒够数量会触发额外效果。</p>';
-    return;
-  }
-
-  const row = (x, isActive) => `
-    <div class="sy-row ${isActive ? 'on' : ''}">
-      <div class="sy-head">
-        <span class="sy-name">${x.synergy.name}</span>
-        <span class="sy-count">${x.count}/${x.synergy.need}</span>
-      </div>
-      <div class="sy-desc">${x.synergy.desc}</div>
-      ${isActive ? '' : `<div class="sy-gap">还差 ${x.gap} 件</div>`}
-    </div>`;
-
-  el.synergyList.innerHTML = `
-    ${active.length ? `<div class="sy-title">已激活 ${active.length} 条</div>${active.map((x) => row(x, true)).join('')}` : ''}
-    ${near.length ? `<div class="sy-title dim">接近触发</div>${near.map((x) => row(x, false)).join('')}` : ''}`;
 }
 
 function toast(text) {
   el.toast.textContent = text;
   el.toast.classList.add('show');
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => el.toast.classList.remove('show'), 1800);
+  toast._t = setTimeout(() => el.toast.classList.remove('show'), 1900);
 }
 
-// ============ 商店 ============
+// ============ 商店与卖出 ============
 
 function doBuy(i) {
   if (run.phase !== PHASE.PREPARE || playing) return;
   const res = run.buy(i);
-  if (!res.ok) toast(res.reason);
+  if (!res.ok) { toast(res.reason); return; }
+  if (!guidesDone.bought) {
+    guidesDone.bought = true;
+    const p = progressFor(run.board, res.item.id);
+    toast(p && p.ready ? `凑齐了！相邻摆放即可合成 ${p.outputName}` : '买好了，拖动它调整位置');
+  }
   renderAll();
 }
 
-// ============ 整理：拖拽 ============
+function doSell(uid) {
+  if (run.phase !== PHASE.PREPARE || playing) return;
+  const res = run.sell(uid);
+  if (!res.ok) return;
+  toast(`卖出 +${res.price} 金`);
+  if (selectedUid === uid) selectedUid = null;
+  renderAll();
+}
+
+// ============ 拖拽（性能关键路径） ============
 
 function onGrab(ev, entry) {
-  if (run.phase !== PHASE.PREPARE || playing) return;
+  if (run.phase !== PHASE.PREPARE || playing || drag) return;
   ev.preventDefault();
   selectedUid = entry.item.uid;
 
   const boardRect = el.board.getBoundingClientRect();
-  const cellPixel = cellToPx(entry.x, entry.y);
+  const anchor = cellToPx(entry.x, entry.y);
+
   drag = {
     uid: entry.item.uid,
     shape: entry.shape,
-    grabbedAt: { x: ev.clientX, y: ev.clientY },
-    // 抓取点对应形状里的哪一格：让拖拽手感贴合手指按下那块
-    anchorOffsetX: ev.clientX - (boardRect.left + cellPixel.left),
-    anchorOffsetY: ev.clientY - (boardRect.top + cellPixel.top),
+    offX: ev.clientX - (boardRect.left + anchor.left),
+    offY: ev.clientY - (boardRect.top + anchor.top),
+    startX: ev.clientX,
+    startY: ev.clientY,
+    boardRect,
     moved: false,
+    raf: 0,
+    last: { x: entry.x, y: entry.y, ok: true },
   };
 
-  window.addEventListener('pointermove', onPointerMove);
-  window.addEventListener('pointerup', onPointerUp);
+  // pointer capture 能少挂全局监听，但合成事件里没有活跃指针会抛错，
+  // 所以包一层；同时仍然在 window 上挂监听，两种路径都能收到事件。
+  try { ev.target.setPointerCapture?.(ev.pointerId); } catch { /* 合成事件忽略 */ }
+  setChipDragging(el.board, entry.item.uid, true);
+
+  window.addEventListener('pointermove', onDragMove);
+  window.addEventListener('pointerup', onDragEnd);
+  window.addEventListener('pointercancel', onDragEnd);
+
+  // 只重绘一次，让选中态立刻可见
   renderAll();
 }
 
-function onPointerMove(ev) {
+function onDragMove(ev) {
   if (!drag) return;
-  const dist = Math.abs(ev.clientX - drag.grabbedAt.x) + Math.abs(ev.clientY - drag.grabbedAt.y);
-  if (dist > 4) drag.moved = true;
+  if (Math.abs(ev.clientX - drag.startX) + Math.abs(ev.clientY - drag.startY) > 4) drag.moved = true;
   if (!drag.moved) return;
-
-  const boardRect = el.board.getBoundingClientRect();
-  // 用抓取偏移换算锚点，拖动时形状跟手
-  const anchorPxX = ev.clientX - boardRect.left - drag.anchorOffsetX;
-  const anchorPxY = ev.clientY - boardRect.top - drag.anchorOffsetY;
-  const x = Math.round(anchorPxX / LAYOUT.STEP);
-  const y = Math.round(anchorPxY / LAYOUT.STEP);
-
-  const cellsAbs = run.board.footprint(drag.shape, x, y);
-  const ok = run.board.canPlace(drag.shape, x, y, drag.uid);
-  hover = { cells: cellsAbs, ok, anchor: { x, y } };
-
-  // 拖拽中的幽灵跟随
-  const ghost = document.getElementById('drag-ghost');
-  if (ghost) {
-    const sz = boardSize(drag.shape);
-    ghost.style.left = `${anchorPxX + boardRect.left}px`;
-    ghost.style.top = `${anchorPxY + boardRect.top}px`;
-    ghost.style.width = `${sz.w * LAYOUT.STEP - LAYOUT.GAP}px`;
-    ghost.style.height = `${sz.h * LAYOUT.STEP - LAYOUT.GAP}px`;
-    ghost.classList.toggle('bad', !ok);
-  }
-  renderAll();
+  drag.pending = { x: ev.clientX, y: ev.clientY };
+  if (drag.raf) return;
+  drag.raf = requestAnimationFrame(applyDragFrame);
 }
 
-function onPointerUp(ev) {
+function applyDragFrame() {
+  drag.raf = 0;
+  if (!drag || !drag.pending) return;
+  const { x: cx, y: cy } = drag.pending;
+  const rect = drag.boardRect;
+  const px = cx - rect.left - drag.offX;
+  const py = cy - rect.top - drag.offY;
+
+  moveChip(el.board, drag.uid, px, py);
+
+  const gx = Math.round(px / LAYOUT.STEP);
+  const gy = Math.round(py / LAYOUT.STEP);
+  const ok = run.board.canPlace(drag.shape, gx, gy, drag.uid);
+  setHover(el.board, run.board.footprint(drag.shape, gx, gy), ok, { x: gx, y: gy });
+
+  const overSell = isOverSellZone(cx, cy);
+  setSellActive(overSell);
+  drag.last = { x: gx, y: gy, ok };
+}
+
+function onDragEnd(ev) {
   if (!drag) return;
-  window.removeEventListener('pointermove', onPointerMove);
-  window.removeEventListener('pointerup', onPointerUp);
+  const root = el.board;
+  window.removeEventListener('pointermove', onDragMove);
+  window.removeEventListener('pointerup', onDragEnd);
+  window.removeEventListener('pointercancel', onDragEnd);
+  if (drag.raf) cancelAnimationFrame(drag.raf);
 
-  if (drag.moved && hover) {
-    const res = run.moveTo(drag.uid, hover.anchor.x, hover.anchor.y);
-    if (!res.ok) toast(res.reason);
-  }
-  const ghost = document.getElementById('drag-ghost');
-  if (ghost) ghost.remove();
+  const session = drag;
   drag = null;
-  hover = null;
+
+  const rect = session.boardRect;
+  const px = ev.clientX - rect.left - session.offX;
+  const py = ev.clientY - rect.top - session.offY;
+  const gx = Math.round(px / LAYOUT.STEP);
+  const gy = Math.round(py / LAYOUT.STEP);
+
+  setHover(root, null);
+  setSellActive(false);
+  resetChip(root, session.uid);
+
+  if (!session.moved) { renderAll(); return; }
+
+  if (isOverSellZone(ev.clientX, ev.clientY)) { doSell(session.uid); return; }
+
+  const res = run.moveTo(session.uid, gx, gy);
+  if (!res.ok) toast(res.reason);
+  else if (!guidesDone.moved) {
+    guidesDone.moved = true;
+    toast('摆好了。同名同阶相邻会自动合成，宝石要贴着武器放');
+  }
   renderAll();
 }
 
-function boardSize(shape) {
-  return {
-    w: Math.max(...shape.map((r) => r.length)),
-    h: shape.length,
-  };
+function isOverSellZone(cx, cy) {
+  if (!el.sellZone) return false;
+  const r = el.sellZone.getBoundingClientRect();
+  return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
 }
 
-// ============ 键盘 ============
+// ============ 键盘与静态事件 ============
 
 function bindStaticEvents() {
   window.addEventListener('keydown', (ev) => {
-    if (ev.target.tagName === 'INPUT') return;
-    if (!selectedUid || !run) return;
+    if (ev.target.tagName === 'INPUT' || !selectedUid || !run) return;
+    if (el.pageShop.classList.contains('hidden')) return;
     if (ev.key === 'r' || ev.key === 'R') {
       if (run.phase !== PHASE.PREPARE || playing) return;
       const res = run.rotate(selectedUid, ev.shiftKey ? -1 : 1);
@@ -304,20 +330,15 @@ function bindStaticEvents() {
       renderAll();
     } else if (ev.key === 'Delete' || ev.key === 'Backspace') {
       if (run.phase !== PHASE.PREPARE || playing) return;
-      const res = run.sell(selectedUid);
-      if (res.ok) toast(`卖出 +${res.price} 金`);
-      selectedUid = null;
-      renderAll();
+      doSell(selectedUid);
     } else if (ev.key === 'Escape') {
       selectedUid = null;
       renderAll();
     } else if (ev.key === '[' || ev.key === ']') {
-      // [ ] 快速循环选中背包里的道具
       const list = run.board.triggerOrder();
       if (!list.length) return;
       const i = list.indexOf(selectedUid);
-      const next = ev.key === ']' ? (i + 1) % list.length : (i - 1 + list.length) % list.length;
-      selectedUid = list[next];
+      selectedUid = list[ev.key === ']' ? (i + 1) % list.length : (i - 1 + list.length) % list.length];
       renderAll();
     }
   });
@@ -326,29 +347,30 @@ function bindStaticEvents() {
     if (!run || run.phase !== PHASE.PREPARE || playing) return;
     const cell = ev.target.closest('.cellbg');
     if (!cell || !selectedUid) return;
-    const x = Number(cell.dataset.x);
-    const y = Number(cell.dataset.y);
+    const all = [...el.board.querySelectorAll('.cellbg')];
+    const idx = all.indexOf(cell);
+    const x = idx % run.board.cols;
+    const y = Math.floor(idx / run.board.cols);
     const res = run.moveTo(selectedUid, x, y);
     if (!res.ok) toast(res.reason);
     renderAll();
   });
 
   el.btnBattle.addEventListener('click', () => {
-    if (!run || playing) return;
-    if (run.phase !== PHASE.PREPARE) return;
+    if (!run || playing || run.phase !== PHASE.PREPARE) return;
     const start = run.startBattle();
     if (!start.ok) { toast(start.reason); return; }
     runBattle();
   });
 
-  el.btnRefresh.addEventListener('click', () => {
-    const r = run.refreshShop();
-    if (!r.ok) toast(r.reason);
+  el.btnBack.addEventListener('click', () => {
+    if (playing) { stage?.skip(); playing = false; }
+    showPage('shop');
     renderAll();
   });
 
-  el.btnUpgrade.addEventListener('click', () => {
-    const r = run.upgradeShop();
+  el.btnRefresh.addEventListener('click', () => {
+    const r = run.refreshShop();
     if (!r.ok) toast(r.reason);
     renderAll();
   });
@@ -359,143 +381,137 @@ function bindStaticEvents() {
     renderAll();
   });
 
-  el.btnReset.addEventListener('click', () => {
-    if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
-    renderClassPicker();
+  el.speedBtn.addEventListener('click', () => {
+    speed = speed >= 2 ? 1 : +(speed + 0.5).toFixed(1);
+    el.speedBtn.textContent = `${speed}×`;
+    if (stage) stage.speed = speed;
   });
 
+  el.skipBtn.addEventListener('click', () => { stage?.skip(); });
+
+  el.btnRecipes.addEventListener('click', showRecipes);
+  el.btnReset.addEventListener('click', renderClassPicker);
   el.btnHelp.addEventListener('click', showHelp);
 }
 
-// ============ 战斗 ============
+// ============ 战斗（二级页面） ============
 
 function runBattle() {
   const result = run.runBattle();
-  run.lastSynergies = (result.synergies || []);
+  run.lastSynergies = result.synergies || [];
   playing = true;
-  renderAll();
 
-  const heroArt = heroArtFor(run);
-  const foeArt = `assets/chars/char-${(result.round % 6)}.png`;
+  showPage('battle');
+  el.battleRound.textContent = `第 ${result.round} 回合`;
+  el.foeName.textContent = result.oppName;
+  el.battleLog.innerHTML = '';
+  el.stageRoot.innerHTML = '';
 
-  el.stage.innerHTML = '';
-  stage = new BattleStage(el.stage, {
-    speed: 1.35,
-    onEvent: (ev) => {
-      if (ev.type === 'end') return;
-      appendBattleLog(ev);
-    },
-    onFinish: () => {
-      playing = false;
-      showResult(result);
-    },
+  // 底部双方数值卡
+  renderFighterCard('a', {
+    name: '你',
+    build: (run.header.branchName || run.header.className),
+    hp: result.hpA, maxHp: result.maxHpA ?? result.hpA,
+    armor: result.myStats?.armor ?? 0,
+    dps: result.myStats?.dps ?? 0,
+    crit: result.myStats?.crit ?? 0,
+    thorns: result.myStats?.thorns ?? 0,
+    regen: result.myStats?.regen ?? 0,
+  });
+  renderFighterCard('b', {
+    name: result.oppName,
+    build: result.foeBuild.map((i) => i.name).slice(0, 2).join(' + '),
+    hp: result.hpB, maxHp: result.maxHpB ?? result.hpB,
+    armor: result.foeStats?.armor ?? 0,
+    dps: result.foeStats?.dps ?? 0,
+    crit: result.foeStats?.crit ?? 0,
+    thorns: result.foeStats?.thorns ?? 0,
+    regen: result.foeStats?.regen ?? 0,
+  });
+
+  stage = new BattleStage(el.stageRoot, {
+    speed,
+    onEvent: (ev) => appendBattleLog(ev),
+    onFinish: () => { playing = false; showResult(result); },
   });
 
   stage.setup({
-    left: { name: '你', cls: run.header.branchName || run.header.className, hp: result.hpA, art: heroArt },
-    right: { name: result.oppName, cls: '', hp: result.hpB, art: foeArt },
+    left: { name: '你', cls: run.header.branchName || run.header.className, hp: result.hpA, art: heroArtFor(run) },
+    right: { name: result.oppName, cls: '', hp: result.hpB, art: `assets/chars/char-${result.round % 6}.png` },
   });
   stage.play(result.events, {
     weaponsA: run.board.list()
       .filter((e) => e.item.cat === 'weapon')
       .sort((a, b) => run.board.orderIndex(a.item.uid) - run.board.orderIndex(b.item.uid))
       .map((e) => ({ order: run.board.orderIndex(e.item.uid), name: e.item.name })),
-    weaponsB: result.foeBuild.filter((i) => i.cat === 'weapon')
-      .map((i, idx) => ({ order: idx, name: i.name })),
+    weaponsB: result.foeBuild.filter((i) => i.cat === 'weapon').map((i, idx) => ({ order: idx, name: i.name })),
   });
 }
 
 function appendBattleLog(ev) {
   const line = run.lastResult.logLines.find((l) => l.t === ev.t && l.type === ev.type);
-  const text = line ? line.text : eventTextShort(ev);
   const d = document.createElement('div');
   d.className = `bl ${ev.type}`;
-  d.innerHTML = `<span class="t">${(ev.t ?? 0).toFixed(1)}s</span>${text}`;
+  d.innerHTML = `<span class="t">${(ev.t ?? 0).toFixed(1)}s</span>${line ? line.text : ev.type}`;
   el.battleLog.appendChild(d);
   el.battleLog.scrollTop = el.battleLog.scrollHeight;
-}
-
-function eventTextShort(ev) {
-  switch (ev.type) {
-    case 'attack': return `${ev.side === 'A' ? '你' : '对手'} ${ev.weaponName} → ${ev.damage}${ev.crit ? ' 暴击' : ''}`;
-    case 'heal': return `回复 ${ev.amount}`;
-    case 'regen': return `持续回复 ${ev.amount}`;
-    case 'burn': return `点燃 ${ev.amount}`;
-    case 'poison': return `中毒 ${ev.stacks} 层`;
-    case 'poisonTick': return `中毒发作 ${ev.amount}`;
-    case 'frost': return `减速 ${ev.chill} 层`;
-    case 'armorBreak': return `破甲 ${ev.amount}`;
-    case 'thorns': return `反伤 ${ev.amount}`;
-    default: return ev.type;
-  }
+  if (ev.t !== undefined) el.battleTimer.textContent = `${ev.t.toFixed(1)}s`;
 }
 
 function showResult(result) {
   run.phase = PHASE.RESULT;
   const win = result.winner === 'A';
   const draw = result.winner === 'draw';
-  const title = win ? '胜利' : draw ? '平局' : '失败';
   const st = result.stats || {};
   const perWeapon = Object.entries(st.perWeapon || {})
     .sort((a, b) => b[1].damage - a[1].damage)
     .map(([name, s]) => `<div class="kv"><span>${name}</span><b>${s.hits} 次 · ${s.damage} 伤害${s.crits ? ` · ${s.crits} 暴击` : ''}</b></div>`)
     .join('') || '<p class="hint">这一场没有武器出手。</p>';
-
-  const syn = run.lastSynergies || [];
-  const synHtml = syn.length
-    ? syn.map((s) => `<div class="kv"><span>${s.name}</span><b>×${s.count}</b></div>`).join('')
+  const syn = (run.lastSynergies || []).length
+    ? run.lastSynergies.map((s) => `<div class="kv"><span>${s.name}</span><b>×${s.count}</b></div>`).join('')
     : '<p class="hint">本场没有触发联动。</p>';
 
   el.overlayBody.innerHTML = `
-    <h2>第 ${result.round} 回合 · ${title}</h2>
+    <h2>第 ${result.round} 回合 · ${win ? '胜利' : draw ? '平局' : '失败'}</h2>
     <div class="result-grid">
+      <div><h4>每件武器的输出</h4>${perWeapon}</div>
       <div>
-        <h4>你的输出</h4>
-        ${perWeapon}
-      </div>
-      <div>
-        <h4>双方状态</h4>
-        <div class="kv"><span>你</span><b>${Math.round(result.hpA)} 血 · 强度 ${result.myPower}</b></div>
-        <div class="kv"><span>${result.oppName}</span><b>${Math.round(result.hpB)} 血 · 强度 ${result.foePower}</b></div>
-        <div class="kv"><span>战斗时长</span><b>${result.duration}s</b></div>
-        <div class="kv"><span>总出手</span><b>${st.totalAttacks || 0} 次</b></div>
+        <h4>结果</h4>
+        <div class="kv"><span>你</span><b>${Math.round(result.hpA)} 血</b></div>
+        <div class="kv"><span>${result.oppName}</span><b>${Math.round(result.hpB)} 血</b></div>
+        <div class="kv"><span>时长</span><b>${result.duration}s</b></div>
         ${win ? '<p class="good">赢了，+1 金。</p>' : draw ? '<p>平局，不掉血。</p>' : `<p class="bad">输了，掉 ${result.dmgTaken} 点生命。</p>`}
       </div>
-      <div>
-        <h4>触发的组合联动</h4>
-        ${synHtml}
-      </div>
+      <div><h4>触发的联动</h4>${syn}</div>
     </div>
-    <div class="row" style="margin-top:16px">
-      <button class="primary" id="ov-ok">继续</button>
-    </div>`;
+    <div class="row mt"><button class="primary" id="ov-ok">继续</button></div>`;
   el.overlay.classList.remove('hidden');
   document.getElementById('ov-ok').addEventListener('click', () => {
     el.overlay.classList.add('hidden');
     nextRound();
   });
-  renderAll();
 }
 
 function nextRound() {
   const r = run.nextRound();
   if (r.over) { showGameOver(r.reason); return; }
+  if (r.qualityUp) toast(`商店品质提升：${r.quality.label}`);
   if (r.offerBranch) { showBranchPicker(); return; }
+  showPage('shop');
   renderAll();
 }
 
 function showBranchPicker() {
   const branches = run.availableBranches();
-  if (!branches.length) { renderAll(); return; }
+  if (!branches.length) { showPage('shop'); renderAll(); return; }
   el.overlayBody.innerHTML = `
-    <h2>选择子职业分支</h2>
-    <p class="lead">${run.classDef.name} 的两个方向，选一个定下本局基调。</p>
+    <h2>选择分支</h2>
+    <p class="lead">${run.classDef.name} 的两个方向，选定本局基调。</p>
     <div class="class-grid two">
       ${branches.map((b) => `
         <button class="class-card branch" data-branch="${b.id}">
           <div class="cc-head"><span class="cc-name">${b.name}</span></div>
           <p class="cc-desc">${b.desc}</p>
-          <div class="cc-meta">解锁道具：${(b.unlockItems || []).join('、') || '无'}</div>
         </button>`).join('')}
     </div>`;
   el.overlay.classList.remove('hidden');
@@ -506,6 +522,7 @@ function showBranchPicker() {
       el.overlay.classList.add('hidden');
       run.pendingBranch = false;
       toast(`分支：${res.branch.name}`);
+      showPage('shop');
       renderAll();
     });
   });
@@ -517,14 +534,11 @@ function showGameOver(reason) {
     <h2>本局结束</h2>
     <p class="lead">${reason}</p>
     <div class="kv"><span>职业</span><b>${h.className}${h.branchName ? ' · ' + h.branchName : ''}</b></div>
-    <div class="kv"><span>总回合</span><b>${h.round}</b></div>
+    <div class="kv"><span>回合</span><b>${h.round}</b></div>
     <div class="kv"><span>战绩</span><b>${h.wins} 胜 ${h.losses} 负</b></div>
-    <div class="kv"><span>剩余生命</span><b>${h.hp}</b></div>
-    <div class="kv"><span>合成次数</span><b>${h.fuses}</b></div>
-    <div class="kv"><span>总评分</span><b class="big">${run.finalScore()}</b></div>
-    <div class="row" style="margin-top:16px">
-      <button class="primary" id="ov-again">再来一局</button>
-    </div>`;
+    <div class="kv"><span>合成</span><b>${h.fuses} 次</b></div>
+    <div class="kv"><span>评分</span><b class="big">${run.finalScore()}</b></div>
+    <div class="row mt"><button class="primary" id="ov-again">再来一局</button></div>`;
   el.overlay.classList.remove('hidden');
   document.getElementById('ov-again').addEventListener('click', () => {
     el.overlay.classList.add('hidden');
@@ -532,27 +546,44 @@ function showGameOver(reason) {
   });
 }
 
+/** 合成图鉴：把全部配方按材料阶位列清楚 */
+function showRecipes() {
+  const rows = recipesByTier().map((r) => `
+    <div class="rc-row">
+      <span class="rc-pair">${r.material.name} ×2</span>
+      <span class="rc-arrow">→</span>
+      <span class="rc-out" style="color:${r.output.tier >= 4 ? '#e8b33c' : r.output.tier >= 3 ? '#b06fe0' : '#4fa3e3'}">${r.output.name}</span>
+      <span class="rc-tag">T${r.output.tier}</span>
+    </div>`).join('');
+  el.overlayBody.innerHTML = `
+    <h2>合成图鉴</h2>
+    <p class="lead">两件<b>同名同阶</b>的道具放在背包里<b>相邻</b>，就会自动合成更高阶版本。
+    合成后形状通常会变大，需要重新整理背包。</p>
+    <div class="rc-list">${rows}</div>
+    <div class="row mt"><button class="primary" id="ov-close">知道了</button></div>`;
+  el.overlay.classList.remove('hidden');
+  document.getElementById('ov-close').addEventListener('click', () => el.overlay.classList.add('hidden'));
+}
+
 function showHelp() {
   el.overlayBody.innerHTML = `
     <h2>怎么玩</h2>
     <div class="tips">
-      <p><b>核心是整理。</b>道具是各种不规则的形状，背包格子有限，怎么塞进去决定你能带多少、能触发什么。</p>
-      <p><b>触发顺序按位置定。</b>从上到下、从左到右。越靠前出手越早，关键武器要往左上角摆。</p>
-      <p><b>相邻才生效。</b>宝石给相邻道具加属性，同类道具相邻有加成，把宝石塞在武器旁边才有用。</p>
-      <p><b>合成。</b>两件同名同阶的道具相邻会自动合成更高阶版本。合成后形状会变，可能要重新整理。</p>
-      <p><b>操作。</b>拖动道具调整位置；按 R 旋转（Shift+R 反向）；Delete 卖出；中括号 [ ] 循环选中。</p>
-      <p><b>职业。</b>开局选职业决定背包大小与被动；第 ${MATCH.branchRound} 回合起可选子职业分支。</p>
+      <p><b>页面分两层。</b>一级页面买东西、整理背包；点「开始战斗」进入二级页面看战斗。</p>
+      <p><b>核心是整理。</b>道具是不规则形状，背包格子有限，怎么塞决定你能带多少。</p>
+      <p><b>位置决定出手顺序。</b>从上到下、从左到右。关键武器摆左上角更早出手。</p>
+      <p><b>相邻才生效。</b>宝石只给相邻道具加成，要贴着武器放。</p>
+      <p><b>升级靠合成。</b>两件同名同阶相邻会自动合成，右侧「升级路径」面板会告诉你还差几件。</p>
+      <p><b>商店品质自动提升。</b>不用手动升级，打到后面自然能买到高阶道具。</p>
+      <p><b>操作。</b>拖动调整位置；R 旋转（Shift+R 反向）；拖到右侧出售区或按 Delete 卖出。</p>
       <p><b>目标。</b>先拿 ${MATCH.winTarget} 胜，或撑满 ${MATCH.maxRounds} 回合不掉光血。</p>
     </div>
-    <div class="row" style="margin-top:16px"><button class="primary" id="ov-close">知道了</button></div>`;
+    <div class="row mt"><button class="primary" id="ov-close">知道了</button></div>`;
   el.overlay.classList.remove('hidden');
   document.getElementById('ov-close').addEventListener('click', () => el.overlay.classList.add('hidden'));
 }
 
 function heroArtFor(run) {
-  const map = {
-    ranger: 1, warrior: 0, mage: 2, rogue: 5, merchant: 6, druid: 7,
-  };
-  const idx = map[run.classDef.id] ?? 0;
-  return `assets/chars/char-${idx}.png`;
+  const map = { ranger: 1, warrior: 0, mage: 2, rogue: 5, merchant: 6, druid: 7 };
+  return `assets/chars/char-${map[run.classDef.id] ?? 0}.png`;
 }

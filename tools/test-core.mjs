@@ -255,10 +255,20 @@ section('职业与分支');
   ok('守卫者分支带反伤', guardianUnit.thorns > 0, `${guardianUnit.thorns}`);
 
   const collector = mk('merchant', 'collector');
-  ok('收藏家分支提高商店上限', collector.bonus.maxShopLevel === 6);
+  ok('收藏家分支加宽货架', collector.bonus.extraShopSlots === 2, `${collector.bonus.extraShopSlots}`);
+  ok('收藏家分支生效后商店变宽', collector.shop.slotCount === ECON.shopSlots + 2,
+    `${collector.shop.slotCount}`);
 
   const trader = mk('merchant', 'trader');
   ok('投机商人分支给额外金币', trader.bonus.extraGold === 4);
+  ok('没有职业能手动升级商店', typeof trader.upgradeShop !== 'function');
+  ok('商店品质随回合自动提升', (() => {
+    const t = new Run({ seed: 12, classId: 'warrior' });
+    const before = t.shop.level;
+    t.header.round = 10;              // 直接推到后期
+    t.shop.setRound(10);
+    return t.shop.level > before;
+  })());
 
   // 满血时狂战士不加成，残血时应加成
   const rageUnit = buildUnit(berserker.board, {
@@ -275,7 +285,8 @@ section('职业与分支');
 section('商店');
 {
   const s = new Shop(12345);
-  ok('初始 5 格都有货', s.slots.length === ECON.shopSlots && s.slots.every((x) => x.item));
+  ok('初始 6 格都有货', s.slots.length === 6 && s.slots.every((x) => x.item), `${s.slots.length} 格`);
+  ok('商店默认摆 6 件', ECON.shopSlots === 6, `${ECON.shopSlots}`);
   const it = s.slots[0].item;
   ok('买不起时被拒', !s.buy(0, 0).ok);
   ok('钱够能买到', s.buy(0, it.price + 1).ok);
@@ -283,13 +294,24 @@ section('商店');
   ok('可以还回货架', s.unsell(0));
   ok('还回后又能买', s.buy(0, 999).ok);
 
-  const lv = new Shop(777);
-  lv.setLevel(5);
+  // 品质按回合自动提升，不能手动设
+  const q = new Shop(777);
+  ok('开局是简陋品质', q.quality.label === '简陋' && q.level === 1, q.quality.label);
+  q.setRound(5);
+  ok('第 5 回合升到精良', q.quality.label === '精良' && q.level === 3, `${q.quality.label}/${q.level}`);
+  q.setRound(11);
+  ok('第 11 回合升到传说', q.quality.label === '传说' && q.level === 5, `${q.quality.label}/${q.level}`);
   const tiers = new Set();
-  for (let i = 0; i < 500; i++) tiers.add(lv.rollTier());
-  ok('5 级商店能出 3、4 阶', tiers.has(3) && tiers.has(4), [...tiers].join(','));
+  for (let i = 0; i < 500; i++) tiers.add(q.rollTier());
+  ok('满品质商店能出 3、4 阶', tiers.has(3) && tiers.has(4), [...tiers].join(','));
 
-  // 换职业后刷新免费
+  // 货架宽度可调（分支用）
+  const wide = new Shop(888);
+  ok('默认 6 格', wide.slots.length === 6);
+  wide.setSlotCount(8);
+  ok('能加宽到 8 格', wide.slots.length === 8, `${wide.slots.length}`);
+
+  // 商人刷新免费
   const merchant = new Run({ seed: 3, classId: 'merchant' });
   const goldBefore = merchant.header.gold;
   const r = merchant.refreshShop();
