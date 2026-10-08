@@ -6,9 +6,10 @@
 
 ## 在线游玩
 
-https://artifact.catsco.cc/backpack-battles/
+http://218.13.157.146:19991
 
-同一份内容的备用域名：https://artifact.catsco.cn/backpack-battles/
+直接开就能玩，端口对公网开放。是 http 不是 https，浏览器会提示「不安全」——
+那只是没上证书，不影响游玩。
 
 ## 本地运行
 
